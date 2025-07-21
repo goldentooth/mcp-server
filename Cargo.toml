@@ -1,6 +1,6 @@
 [package]
 name = "goldentooth-mcp"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 authors = ["Nathan Douglas <github@darkdell.net>"]
 description = "MCP server for Goldentooth cluster management"
@@ -9,3 +9,10 @@ license = "Unlicense"
 [dependencies]
 rmcp = { version = "0.2.0", features = ["server"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+tokio-test = "0.4"
+assert_matches = "1.5"
+futures = "0.3"

@@ -68,8 +68,30 @@ echo '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"0.1.0"
 ## Development
 
 ### Project structure
-- `src/main.rs` - Main server implementation
+- `src/main.rs` - Main server entry point
+- `src/service.rs` - MCP service implementation
+- `src/lib.rs` - Library exports
+- `tests/` - Integration tests
 - `goldentooth-mcp.service` - Systemd service file
+
+### Testing
+The project includes comprehensive tests covering 100% of the public API:
+
+```bash
+# Run all tests
+cargo test
+
+# Run with output
+cargo test -- --nocapture
+```
+
+Test coverage includes:
+- Service creation and cloning
+- Server info structure (name, version, capabilities)
+- Request handling (currently returns unimplemented)
+- Notification handling (accepts all notifications)
+- Service trait implementation (Send + Sync + 'static)
+- Integration tests for service lifecycle
 
 ### Adding features
 The server currently provides a minimal MCP implementation. To add tools and resources:
@@ -77,6 +99,7 @@ The server currently provides a minimal MCP implementation. To add tools and res
 1. Implement tool handlers in the `handle_request` method
 2. Add resource providers for cluster data
 3. Update server capabilities in `get_info`
+4. Add corresponding tests for new functionality
 
 ## License
 
