@@ -1,7 +1,7 @@
 use rmcp::{
-    Service, RoleServer,
-    service::{ServiceRole, RequestContext, NotificationContext},
-    model::{ErrorData, InitializeResult, Implementation, ServerCapabilities, ProtocolVersion}
+    RoleServer, Service,
+    model::{ErrorData, Implementation, InitializeResult, ProtocolVersion, ServerCapabilities},
+    service::{NotificationContext, RequestContext, ServiceRole},
 };
 use std::future::Future;
 
@@ -19,7 +19,8 @@ impl Service<RoleServer> for GoldentoothService {
         &self,
         _request: <RoleServer as ServiceRole>::PeerReq,
         _context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<<RoleServer as ServiceRole>::Resp, ErrorData>> + Send + '_ {
+    ) -> impl Future<Output = Result<<RoleServer as ServiceRole>::Resp, ErrorData>> + Send + '_
+    {
         async move {
             // For now, just return a generic error
             // We'll implement proper request handling later
@@ -32,9 +33,7 @@ impl Service<RoleServer> for GoldentoothService {
         _notification: <RoleServer as ServiceRole>::PeerNot,
         _context: NotificationContext<RoleServer>,
     ) -> impl Future<Output = Result<(), ErrorData>> + Send + '_ {
-        async move {
-            Ok(())
-        }
+        async move { Ok(()) }
     }
 
     fn get_info(&self) -> <RoleServer as ServiceRole>::Info {
@@ -65,7 +64,7 @@ mod tests {
     fn test_get_info() {
         let service = GoldentoothService::new();
         let info = service.get_info();
-        
+
         assert_eq!(info.server_info.name, "goldentooth-mcp");
         assert_eq!(info.server_info.version, "0.1.0");
         assert_eq!(info.protocol_version, ProtocolVersion::default());
@@ -77,7 +76,7 @@ mod tests {
         let service = GoldentoothService::new();
         let info = service.get_info();
         let capabilities = info.capabilities;
-        
+
         // Test default capabilities
         // As we add features, we'll update these tests
         assert!(capabilities.tools.is_none());
@@ -89,24 +88,24 @@ mod tests {
     #[tokio::test]
     async fn test_handle_notification_returns_ok() {
         let _service = GoldentoothService::new();
-        
+
         // Since we can't easily construct the proper notification types,
         // we'll test that our implementation always returns Ok
         // The actual notification handling is tested through integration tests
-        
+
         // This tests our current implementation that always returns Ok(())
         assert!(true);
     }
 
-    #[tokio::test] 
+    #[tokio::test]
     #[should_panic(expected = "Request handling not yet implemented")]
     async fn test_handle_request_panics() {
         let _service = GoldentoothService::new();
-        
+
         // We can't easily construct the request types, but we know
         // our implementation will panic with unimplemented
         // This would be tested through actual MCP protocol integration
-        
+
         // For now, directly test the panic behavior
         panic!("Request handling not yet implemented");
     }
@@ -117,7 +116,7 @@ mod tests {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<GoldentoothService>();
     }
-    
+
     #[test]
     fn test_service_static_lifetime() {
         // Verify the service can be used in static contexts
