@@ -67,6 +67,27 @@ echo '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"0.1.0"
 
 ## Development
 
+### Setting up pre-commit hooks
+This project uses pre-commit to ensure code quality:
+
+```bash
+# Install pre-commit
+pip install pre-commit
+
+# Install the git hooks
+pre-commit install
+
+# Run manually on all files
+pre-commit run --all-files
+```
+
+The pre-commit configuration includes:
+- `rustfmt` - Automatic code formatting
+- `clippy` - Rust linting with warnings as errors
+- `cargo check` - Ensure code compiles
+- `cargo test` - Run all tests
+- General file hygiene (trailing whitespace, EOF, etc.)
+
 ### Project structure
 - `src/main.rs` - Main server entry point
 - `src/service.rs` - MCP service implementation

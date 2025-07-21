@@ -8,6 +8,12 @@ use std::future::Future;
 #[derive(Clone)]
 pub struct GoldentoothService;
 
+impl Default for GoldentoothService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GoldentoothService {
     pub fn new() -> Self {
         GoldentoothService
@@ -15,6 +21,7 @@ impl GoldentoothService {
 }
 
 impl Service<RoleServer> for GoldentoothService {
+    #[allow(clippy::manual_async_fn)]
     fn handle_request(
         &self,
         _request: <RoleServer as ServiceRole>::PeerReq,
@@ -28,6 +35,7 @@ impl Service<RoleServer> for GoldentoothService {
         }
     }
 
+    #[allow(clippy::manual_async_fn)]
     fn handle_notification(
         &self,
         _notification: <RoleServer as ServiceRole>::PeerNot,
