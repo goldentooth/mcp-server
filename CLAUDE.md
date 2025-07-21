@@ -99,6 +99,14 @@ To add MCP tools and resources:
 3. Add corresponding unit and integration tests
 4. Update version in `Cargo.toml` and service info
 
+### CI/CD Pipeline
+
+GitHub Actions automatically builds release binaries on every push to main:
+- **Targets**: x86_64 and aarch64 for both Linux and macOS
+- **Quality Gates**: Tests and clippy checks must pass
+- **Artifacts**: Release binaries uploaded for each architecture
+- **Auto-Release**: Creates GitHub releases for new versions in Cargo.toml
+
 ### Deployment Context
 
 The server is designed for deployment as a systemd service on Raspberry Pi nodes, with:
