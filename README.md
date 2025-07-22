@@ -6,6 +6,8 @@ MCP (Model Context Protocol) server for Goldentooth cluster management.
 
 This server provides an MCP interface to interact with the Goldentooth Raspberry Pi cluster ("bramble"). It enables AI assistants to query cluster status, manage services, and perform administrative tasks.
 
+The server automatically creates new releases with incremented versions on every commit to main.
+
 ## Building
 
 ### Prerequisites
