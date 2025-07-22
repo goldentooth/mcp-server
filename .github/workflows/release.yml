@@ -58,11 +58,9 @@ jobs:
         key: ${{ runner.os }}-${{ matrix.target }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Run tests
-      if: matrix.target == 'x86_64-unknown-linux-gnu'
       run: cargo test --verbose
 
     - name: Run clippy
-      if: matrix.target == 'x86_64-unknown-linux-gnu'
       run: cargo clippy --target ${{ matrix.target }} -- -D warnings
 
     - name: Build release binary
