@@ -2,7 +2,8 @@ name: Build Release
 
 on:
   push:
-    branches: [ main ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ main ]
 
@@ -22,8 +23,6 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             name: goldentooth-mcp-aarch64-linux
-    # Create release only for version bump commits
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && contains(github.event.head_commit.message, '[version bump]')
     steps:
     - uses: actions/checkout@v4
 
@@ -59,9 +58,11 @@ jobs:
         key: ${{ runner.os }}-${{ matrix.target }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Run tests
+      if: matrix.target == 'x86_64-unknown-linux-gnu' && (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v'))
       run: cargo test --verbose
 
     - name: Run clippy
+      if: matrix.target == 'x86_64-unknown-linux-gnu' && (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v'))
       run: cargo clippy --target ${{ matrix.target }} -- -D warnings
 
     - name: Build release binary
@@ -95,6 +96,8 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
+    # Create release only for tags
+    if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
     - uses: actions/checkout@v4
@@ -104,12 +107,13 @@ jobs:
       with:
         path: release-artifacts
 
-    - name: Get version from Cargo.toml
+    - name: Get version from tag
       id: version
       run: |
-        VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+        TAG_NAME=${GITHUB_REF#refs/tags/}
+        VERSION=${TAG_NAME#v}
         echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+        echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
 
     - name: Check if release exists
       id: check_release
@@ -127,7 +131,11 @@ jobs:
       run: |
         gh release create ${{ steps.version.outputs.tag }} \
           --title "Release ${{ steps.version.outputs.version }}" \
-          --notes "Automated release of goldentooth-mcp ${{ steps.version.outputs.version }}" \
+          --notes "Automated release of goldentooth-mcp ${{ steps.version.outputs.version }}
+
+        - HTTP transport mode for remote MCP connections
+        - Architecture-specific Linux binaries (x86_64 and aarch64)
+        - Automated CI/CD with tag-based releases" \
           --latest \
           release-artifacts/*/*
       env:
