@@ -1,91 +1,39 @@
-name: Bump Version (Tag-based)
+name: Bump version
+run-name: Bump version
 
 on:
+  workflow_call:
   workflow_dispatch:
-    inputs:
-      version_type:
-        description: 'Version bump type'
-        required: true
-        default: 'patch'
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
+  push:
+    branches:
+      - main
 
 permissions:
-  contents: write
+  id-token: write
+  contents: read
 
 jobs:
   bump-version:
-    name: Bump Version and Create Tag
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-    - name: Configure Git
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
+      - name: Assume IAM Role
+        id: assume-iam-role
+        uses: bitterbridge/github-actions/assume-iam-role@v0.0.47
+        with:
+          role-to-assume: ${{ vars.IAM_ROLE_TO_ASSUME }}
 
-    - name: Get current version
-      id: current_version
-      run: |
-        CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-        echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-        echo "Current version: $CURRENT_VERSION"
+      - name: Get GitHub Token
+        id: get-github-token
+        uses: bitterbridge/github-actions/get-github-token@v0.0.47
+        with:
+          github-app-id-secret-path: ${{ vars.APP_ID_SECRET_PATH }}
+          github-app-private-key-secret-path: ${{ vars.APP_PRIVATE_KEY_SECRET_PATH }}
 
-    - name: Bump version
-      id: new_version
-      run: |
-        CURRENT_VERSION="${{ steps.current_version.outputs.version }}"
-        IFS='.' read -ra VERSION_PARTS <<< "$CURRENT_VERSION"
-        MAJOR=${VERSION_PARTS[0]}
-        MINOR=${VERSION_PARTS[1]}
-        PATCH=${VERSION_PARTS[2]}
-
-        case "${{ github.event.inputs.version_type }}" in
-          major)
-            MAJOR=$((MAJOR + 1))
-            MINOR=0
-            PATCH=0
-            ;;
-          minor)
-            MINOR=$((MINOR + 1))
-            PATCH=0
-            ;;
-          patch)
-            PATCH=$((PATCH + 1))
-            ;;
-        esac
-
-        NEW_VERSION="$MAJOR.$MINOR.$PATCH"
-        echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
-        echo "New version: $NEW_VERSION"
-
-    - name: Update Cargo.toml
-      run: |
-        sed -i 's/^version = ".*"/version = "${{ steps.new_version.outputs.version }}"/' Cargo.toml
-        echo "Updated Cargo.toml to version ${{ steps.new_version.outputs.version }}"
-
-    - name: Commit version bump
-      run: |
-        git add Cargo.toml
-        git commit -m "chore: bump version to ${{ steps.new_version.outputs.version }}
-
-        Automated version bump from ${{ steps.current_version.outputs.version }} to ${{ steps.new_version.outputs.version }}
-
-        🤖 Generated with [Claude Code](https://claude.ai/code)
-
-        Co-Authored-By: Claude <noreply@anthropic.com>"
-
-    - name: Create and push tag
-      run: |
-        git tag "v${{ steps.new_version.outputs.version }}"
-        git push origin main
-        git push origin "v${{ steps.new_version.outputs.version }}"
-        echo "Created and pushed tag v${{ steps.new_version.outputs.version }}"
+      - name: Bump version
+        id: bump-version
+        uses: bitterbridge/github-actions/bump-version@v0.0.47
+        with:
+          github-token: ${{ steps.get-github-token.outputs.github-token}}
