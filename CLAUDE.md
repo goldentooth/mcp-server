@@ -121,3 +121,11 @@ The server is designed for deployment as a systemd service on Raspberry Pi nodes
 - Systemd service configuration (`goldentooth-mcp.service`)
 - Resource limits and security hardening
 - stdin/stdout communication model for MCP clients
+
+### Ansible Deployment
+
+Automated deployment is available via Ansible role in `../ansible/`:
+- **Role**: `goldentooth.setup_mcp_server` - Downloads latest release, configures service
+- **Playbook**: `setup_mcp_server.yaml` - Deploys across cluster nodes
+- **Command**: `goldentooth setup_mcp_server` - CLI wrapper for deployment
+- **Features**: Architecture detection, automatic updates, systemd management

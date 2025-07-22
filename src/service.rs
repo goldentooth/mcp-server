@@ -74,7 +74,7 @@ mod tests {
         let info = service.get_info();
 
         assert_eq!(info.server_info.name, "goldentooth-mcp");
-        assert_eq!(info.server_info.version, "0.1.0");
+        assert_eq!(info.server_info.version, "0.0.2");
         assert_eq!(info.protocol_version, ProtocolVersion::default());
         assert!(info.instructions.is_none());
     }

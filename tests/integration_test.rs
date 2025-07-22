@@ -48,7 +48,7 @@ fn test_service_info_structure() {
 
     // Verify all required fields are present
     assert_eq!(info.server_info.name, "goldentooth-mcp");
-    assert_eq!(info.server_info.version, "0.1.0");
+    assert_eq!(info.server_info.version, "0.0.2");
 
     // Verify protocol version
     let _protocol = info.protocol_version;
