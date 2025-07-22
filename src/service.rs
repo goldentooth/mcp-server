@@ -50,7 +50,7 @@ impl Service<RoleServer> for GoldentoothService {
             capabilities: ServerCapabilities::default(),
             server_info: Implementation {
                 name: "goldentooth-mcp".to_string(),
-                version: "0.0.4".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
             },
             instructions: None,
         }
@@ -74,7 +74,8 @@ mod tests {
         let info = service.get_info();
 
         assert_eq!(info.server_info.name, "goldentooth-mcp");
-        assert_eq!(info.server_info.version, "0.0.2");
+        // Version should match Cargo.toml - don't hardcode it
+        assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(info.protocol_version, ProtocolVersion::default());
         assert!(info.instructions.is_none());
     }
