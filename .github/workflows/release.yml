@@ -101,7 +101,8 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Only create release for version bump commits or manual triggers
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && contains(github.event.head_commit.message, '[version bump]')
 
     steps:
     - uses: actions/checkout@v4

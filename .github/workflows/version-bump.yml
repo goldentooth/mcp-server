@@ -1,0 +1,73 @@
+name: Version Bump
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  version-bump:
+    name: Bump Version
+    runs-on: ubuntu-latest
+    # Only run if the commit is not from the version bump workflow itself
+    if: "!contains(github.event.head_commit.message, '[version bump]')"
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+
+    - name: Configure Git
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+    - name: Get current version
+      id: current_version
+      run: |
+        CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+        echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        echo "Current version: $CURRENT_VERSION"
+
+    - name: Bump patch version
+      id: new_version
+      run: |
+        CURRENT_VERSION="${{ steps.current_version.outputs.version }}"
+        IFS='.' read -ra VERSION_PARTS <<< "$CURRENT_VERSION"
+        MAJOR=${VERSION_PARTS[0]}
+        MINOR=${VERSION_PARTS[1]}
+        PATCH=${VERSION_PARTS[2]}
+        NEW_PATCH=$((PATCH + 1))
+        NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+        echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "New version: $NEW_VERSION"
+
+    - name: Update Cargo.toml
+      run: |
+        sed -i 's/^version = ".*"/version = "${{ steps.new_version.outputs.version }}"/' Cargo.toml
+        echo "Updated Cargo.toml to version ${{ steps.new_version.outputs.version }}"
+
+    - name: Update version in service.rs
+      run: |
+        sed -i 's/version: ".*"/version: "${{ steps.new_version.outputs.version }}"/' src/service.rs
+        echo "Updated service.rs to version ${{ steps.new_version.outputs.version }}"
+
+    - name: Verify changes
+      run: |
+        echo "=== Cargo.toml changes ==="
+        grep '^version = ' Cargo.toml
+        echo "=== service.rs changes ==="
+        grep 'version: "' src/service.rs
+
+    - name: Commit and push version bump
+      run: |
+        git add Cargo.toml src/service.rs
+        git commit -m "chore: bump version to ${{ steps.new_version.outputs.version }} [version bump]
+
+        Automated version bump from ${{ steps.current_version.outputs.version }} to ${{ steps.new_version.outputs.version }}
+
+        🤖 Generated with [Claude Code](https://claude.ai/code)
+
+        Co-Authored-By: Claude <noreply@anthropic.com>"
+        git push

@@ -101,11 +101,18 @@ To add MCP tools and resources:
 
 ### CI/CD Pipeline
 
-GitHub Actions automatically builds release binaries on every push to main:
+GitHub Actions provides automated versioning and releases:
+
+**Version Bump Workflow** (runs on every push to main):
+- Automatically increments patch version in Cargo.toml and src/service.rs
+- Commits version bump with `[version bump]` marker
+- Skips if commit already contains `[version bump]` to prevent loops
+
+**Release Workflow** (triggered by version bump commits):
 - **Targets**: x86_64 and aarch64 for both Linux and macOS
 - **Quality Gates**: Tests and clippy checks must pass
 - **Artifacts**: Release binaries uploaded for each architecture
-- **Auto-Release**: Creates GitHub releases for new versions in Cargo.toml
+- **Auto-Release**: Creates GitHub releases for new versions
 
 ### Deployment Context
 
