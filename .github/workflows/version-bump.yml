@@ -48,21 +48,15 @@ jobs:
         sed -i 's/^version = ".*"/version = "${{ steps.new_version.outputs.version }}"/' Cargo.toml
         echo "Updated Cargo.toml to version ${{ steps.new_version.outputs.version }}"
 
-    - name: Update version in service.rs
-      run: |
-        sed -i 's/version: ".*"/version: "${{ steps.new_version.outputs.version }}"/' src/service.rs
-        echo "Updated service.rs to version ${{ steps.new_version.outputs.version }}"
-
     - name: Verify changes
       run: |
         echo "=== Cargo.toml changes ==="
         grep '^version = ' Cargo.toml
-        echo "=== service.rs changes ==="
-        grep 'version: "' src/service.rs
+        echo "Version successfully updated to ${{ steps.new_version.outputs.version }}"
 
     - name: Commit and push version bump
       run: |
-        git add Cargo.toml src/service.rs
+        git add Cargo.toml
         git commit -m "chore: bump version to ${{ steps.new_version.outputs.version }} [version bump]
 
         Automated version bump from ${{ steps.current_version.outputs.version }} to ${{ steps.new_version.outputs.version }}
