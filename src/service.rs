@@ -50,7 +50,7 @@ impl Service<RoleServer> for GoldentoothService {
             capabilities: ServerCapabilities::default(),
             server_info: Implementation {
                 name: "goldentooth-mcp".to_string(),
-                version: "0.0.3".to_string(),
+                version: "0.0.4".to_string(),
             },
             instructions: None,
         }

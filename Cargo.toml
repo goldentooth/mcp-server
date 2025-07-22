@@ -1,6 +1,6 @@
 [package]
 name = "goldentooth-mcp"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 authors = ["Nathan Douglas <github@darkdell.net>"]
 description = "MCP server for Goldentooth cluster management"
