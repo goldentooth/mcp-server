@@ -248,6 +248,7 @@ pub async fn handle_request(
                 .unwrap());
         }
     }
+
     // Only allow POST requests for MCP endpoints
     if req.method() != Method::POST {
         return Ok(Response::builder()
