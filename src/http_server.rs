@@ -289,6 +289,43 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
     }
 }
 
+fn create_json_error_response(status: StatusCode, error_message: &str) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/json")
+        .header("Access-Control-Allow-Origin", "*")
+        .body(Full::new(Bytes::from(
+            serde_json::json!({"error": error_message}).to_string(),
+        )))
+        .unwrap()
+}
+
+async fn parse_json_body(
+    req: Request<hyper::body::Incoming>,
+) -> Result<serde_json::Value, Response<Full<Bytes>>> {
+    let body = match req.collect().await {
+        Ok(body) => body.to_bytes(),
+        Err(_) => {
+            return Err(create_json_error_response(
+                StatusCode::BAD_REQUEST,
+                "Failed to read request body",
+            ));
+        }
+    };
+
+    let request_data: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(data) => data,
+        Err(_) => {
+            return Err(create_json_error_response(
+                StatusCode::BAD_REQUEST,
+                "Invalid JSON in request body",
+            ));
+        }
+    };
+
+    Ok(request_data)
+}
+
 async fn handle_auth_request(
     req: Request<hyper::body::Incoming>,
     auth_service: Option<AuthService>,
@@ -301,7 +338,7 @@ async fn handle_auth_request(
                 .header("Content-Type", "application/json")
                 .header("Access-Control-Allow-Origin", "*")
                 .body(Full::new(Bytes::from(
-                    r#"{"error":"Authentication not configured"}"#,
+                    serde_json::json!({"error": "Authentication not configured"}).to_string(),
                 )))
                 .unwrap());
         }
@@ -326,10 +363,10 @@ async fn handle_auth_request(
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .header("Content-Type", "application/json")
                     .header("Access-Control-Allow-Origin", "*")
-                    .body(Full::new(Bytes::from(format!(
-                        r#"{{"error":"OIDC discovery failed: {}"}}"#,
-                        e
-                    ))))
+                    .body(Full::new(Bytes::from(
+                        serde_json::json!({"error": format!("OIDC discovery failed: {}", e)})
+                            .to_string(),
+                    )))
                     .unwrap()),
             }
         }
@@ -351,54 +388,26 @@ async fn handle_auth_request(
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .header("Content-Type", "application/json")
                     .header("Access-Control-Allow-Origin", "*")
-                    .body(Full::new(Bytes::from(format!(
-                        r#"{{"error":"Failed to generate authorization URL: {}"}}"#,
-                        e
-                    ))))
+                    .body(Full::new(Bytes::from(
+                        serde_json::json!({"error": format!("Failed to generate authorization URL: {}", e)}).to_string()
+                    )))
                     .unwrap()),
             }
         }
         (&Method::POST, "/auth/token") => {
             // Exchange authorization code for token
-            let body = match req.collect().await {
-                Ok(body) => body.to_bytes(),
-                Err(_) => {
-                    return Ok(Response::builder()
-                        .status(StatusCode::BAD_REQUEST)
-                        .header("Content-Type", "application/json")
-                        .header("Access-Control-Allow-Origin", "*")
-                        .body(Full::new(Bytes::from(
-                            r#"{"error":"Failed to read request body"}"#,
-                        )))
-                        .unwrap());
-                }
-            };
-
-            let request_data: serde_json::Value = match serde_json::from_slice(&body) {
+            let request_data = match parse_json_body(req).await {
                 Ok(data) => data,
-                Err(_) => {
-                    return Ok(Response::builder()
-                        .status(StatusCode::BAD_REQUEST)
-                        .header("Content-Type", "application/json")
-                        .header("Access-Control-Allow-Origin", "*")
-                        .body(Full::new(Bytes::from(
-                            r#"{"error":"Invalid JSON in request body"}"#,
-                        )))
-                        .unwrap());
-                }
+                Err(response) => return Ok(response),
             };
 
             let code = match request_data.get("code").and_then(|c| c.as_str()) {
                 Some(code) => code,
                 None => {
-                    return Ok(Response::builder()
-                        .status(StatusCode::BAD_REQUEST)
-                        .header("Content-Type", "application/json")
-                        .header("Access-Control-Allow-Origin", "*")
-                        .body(Full::new(Bytes::from(
-                            r#"{"error":"Missing 'code' parameter"}"#,
-                        )))
-                        .unwrap());
+                    return Ok(create_json_error_response(
+                        StatusCode::BAD_REQUEST,
+                        "Missing 'code' parameter",
+                    ));
                 }
             };
 
@@ -420,54 +429,27 @@ async fn handle_auth_request(
                     .status(StatusCode::BAD_REQUEST)
                     .header("Content-Type", "application/json")
                     .header("Access-Control-Allow-Origin", "*")
-                    .body(Full::new(Bytes::from(format!(
-                        r#"{{"error":"Token exchange failed: {}"}}"#,
-                        e
-                    ))))
+                    .body(Full::new(Bytes::from(
+                        serde_json::json!({"error": format!("Token exchange failed: {}", e)})
+                            .to_string(),
+                    )))
                     .unwrap()),
             }
         }
         (&Method::POST, "/auth/refresh") => {
             // Refresh access token
-            let body = match req.collect().await {
-                Ok(body) => body.to_bytes(),
-                Err(_) => {
-                    return Ok(Response::builder()
-                        .status(StatusCode::BAD_REQUEST)
-                        .header("Content-Type", "application/json")
-                        .header("Access-Control-Allow-Origin", "*")
-                        .body(Full::new(Bytes::from(
-                            r#"{"error":"Failed to read request body"}"#,
-                        )))
-                        .unwrap());
-                }
-            };
-
-            let request_data: serde_json::Value = match serde_json::from_slice(&body) {
+            let request_data = match parse_json_body(req).await {
                 Ok(data) => data,
-                Err(_) => {
-                    return Ok(Response::builder()
-                        .status(StatusCode::BAD_REQUEST)
-                        .header("Content-Type", "application/json")
-                        .header("Access-Control-Allow-Origin", "*")
-                        .body(Full::new(Bytes::from(
-                            r#"{"error":"Invalid JSON in request body"}"#,
-                        )))
-                        .unwrap());
-                }
+                Err(response) => return Ok(response),
             };
 
             let refresh_token = match request_data.get("refresh_token").and_then(|t| t.as_str()) {
                 Some(token) => token,
                 None => {
-                    return Ok(Response::builder()
-                        .status(StatusCode::BAD_REQUEST)
-                        .header("Content-Type", "application/json")
-                        .header("Access-Control-Allow-Origin", "*")
-                        .body(Full::new(Bytes::from(
-                            r#"{"error":"Missing 'refresh_token' parameter"}"#,
-                        )))
-                        .unwrap());
+                    return Ok(create_json_error_response(
+                        StatusCode::BAD_REQUEST,
+                        "Missing 'refresh_token' parameter",
+                    ));
                 }
             };
 
@@ -489,10 +471,10 @@ async fn handle_auth_request(
                     .status(StatusCode::BAD_REQUEST)
                     .header("Content-Type", "application/json")
                     .header("Access-Control-Allow-Origin", "*")
-                    .body(Full::new(Bytes::from(format!(
-                        r#"{{"error":"Token refresh failed: {}"}}"#,
-                        e
-                    ))))
+                    .body(Full::new(Bytes::from(
+                        serde_json::json!({"error": format!("Token refresh failed: {}", e)})
+                            .to_string(),
+                    )))
                     .unwrap()),
             }
         }
@@ -503,7 +485,7 @@ async fn handle_auth_request(
                 .header("Content-Type", "application/json")
                 .header("Access-Control-Allow-Origin", "*")
                 .body(Full::new(Bytes::from(
-                    r#"{"error":"Auth endpoint not found"}"#,
+                    serde_json::json!({"error": "Auth endpoint not found"}).to_string(),
                 )))
                 .unwrap())
         }
@@ -624,5 +606,25 @@ mod tests {
         let json: Value = serde_json::from_str(health_response).unwrap();
         assert_eq!(json["status"], "healthy");
         assert_eq!(json["service"], "goldentooth-mcp");
+    }
+
+    #[test]
+    fn test_create_json_error_response() {
+        // Test that the helper function creates proper JSON error responses
+        let response = create_json_error_response(StatusCode::BAD_REQUEST, "Test error message");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        // Verify headers are set correctly
+        assert_eq!(
+            response.headers().get("Content-Type").unwrap(),
+            "application/json"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("Access-Control-Allow-Origin")
+                .unwrap(),
+            "*"
+        );
     }
 }
