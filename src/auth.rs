@@ -63,7 +63,7 @@ impl Default for AuthConfig {
     fn default() -> Self {
         Self {
             authelia_base_url: env::var("AUTHELIA_BASE_URL")
-                .unwrap_or_else(|_| "https://auth.goldentooth.net:9091".to_string()),
+                .unwrap_or_else(|_| "https://auth.services.goldentooth.net".to_string()),
             client_id: env::var("OAUTH_CLIENT_ID")
                 .unwrap_or_else(|_| "goldentooth-mcp".to_string()),
             client_secret: env::var("OAUTH_CLIENT_SECRET").unwrap_or_else(|_| "".to_string()),
@@ -336,7 +336,7 @@ mod tests {
         let config = AuthConfig::default();
         assert_eq!(
             config.authelia_base_url,
-            "https://auth.goldentooth.net:9091"
+            "https://auth.services.goldentooth.net"
         );
         assert_eq!(config.client_id, "goldentooth-mcp");
         assert_eq!(config.redirect_uri, "https://mcp.goldentooth.net/callback");
