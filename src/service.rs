@@ -1,12 +1,17 @@
+use crate::auth::{AuthConfig, AuthError, AuthService};
 use rmcp::{
     RoleServer, Service,
-    model::{ErrorData, Implementation, InitializeResult, ProtocolVersion, ServerCapabilities},
+    model::{
+        ErrorCode, ErrorData, Implementation, InitializeResult, ProtocolVersion, ServerCapabilities,
+    },
     service::{NotificationContext, RequestContext, ServiceRole},
 };
 use std::future::Future;
 
 #[derive(Clone)]
-pub struct GoldentoothService;
+pub struct GoldentoothService {
+    auth_service: Option<AuthService>,
+}
 
 impl Default for GoldentoothService {
     fn default() -> Self {
@@ -16,7 +21,84 @@ impl Default for GoldentoothService {
 
 impl GoldentoothService {
     pub fn new() -> Self {
-        GoldentoothService
+        let auth_config = AuthConfig::default();
+        let auth_service = if AuthService::new(auth_config.clone()).requires_auth() {
+            Some(AuthService::new(auth_config))
+        } else {
+            None
+        };
+
+        GoldentoothService { auth_service }
+    }
+
+    pub async fn with_auth() -> Result<Self, AuthError> {
+        let auth_config = AuthConfig::default();
+        let mut auth_service = AuthService::new(auth_config);
+        auth_service.initialize().await?;
+
+        Ok(GoldentoothService {
+            auth_service: Some(auth_service),
+        })
+    }
+
+    pub fn is_auth_enabled(&self) -> bool {
+        self.auth_service.is_some()
+    }
+
+    async fn validate_request_auth(
+        &self,
+        context: &RequestContext<RoleServer>,
+    ) -> Result<Option<crate::auth::Claims>, ErrorData> {
+        if let Some(auth_service) = &self.auth_service {
+            // Extract Bearer token from context metadata
+            // Note: This is a simplified example - actual implementation depends on rmcp context structure
+            if let Some(auth_header) = self.extract_auth_header(context) {
+                if let Some(token) = auth_header.strip_prefix("Bearer ") {
+                    match auth_service.validate_token(token).await {
+                        Ok(claims) => Ok(Some(claims)),
+                        Err(e) => {
+                            // Log the specific error for debugging, but return generic error for security
+                            eprintln!("Authentication failed: {}", e);
+                            Err(ErrorData {
+                                code: ErrorCode(-32002),
+                                message: "Authentication failed".into(),
+                                data: None,
+                            })
+                        }
+                    }
+                } else {
+                    Err(ErrorData {
+                        code: ErrorCode(-32002),
+                        message: "Invalid authorization header format".into(),
+                        data: None,
+                    })
+                }
+            } else {
+                Err(ErrorData {
+                    code: ErrorCode(-32002),
+                    message: "Missing authorization header".into(),
+                    data: None,
+                })
+            }
+        } else {
+            // No auth required
+            Ok(None)
+        }
+    }
+
+    fn extract_auth_header(&self, _context: &RequestContext<RoleServer>) -> Option<String> {
+        // TODO: Extract authorization header from MCP request context
+        // This is a placeholder implementation until rmcp provides access to request metadata
+        //
+        // For HTTP mode, we would ideally extract from HTTP headers:
+        // context.headers().get("authorization").map(|h| h.to_string())
+        //
+        // For stdin/stdout mode, authentication would need to be handled differently,
+        // potentially through a session token or connection-level authentication
+
+        // Fallback: check environment variable for testing purposes
+        // This allows testing authentication without full HTTP integration
+        std::env::var("AUTHORIZATION").ok()
     }
 }
 
@@ -25,11 +107,14 @@ impl Service<RoleServer> for GoldentoothService {
     fn handle_request(
         &self,
         _request: <RoleServer as ServiceRole>::PeerReq,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<<RoleServer as ServiceRole>::Resp, ErrorData>> + Send + '_
     {
         async move {
-            // For now, just return a generic error
+            // Validate authentication if enabled
+            let _claims = self.validate_request_auth(&context).await?;
+
+            // For now, just return a generic error for actual requests
             // We'll implement proper request handling later
             unimplemented!("Request handling not yet implemented")
         }

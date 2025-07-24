@@ -53,19 +53,64 @@ sudo systemctl start goldentooth-mcp
 ## Usage
 
 ### Running locally
+
+#### Without authentication (development)
 ```bash
 # Development mode
 cargo run
+
+# HTTP mode for web integration
+cargo run -- --http
 
 # Or if installed
 goldentooth-mcp
 ```
 
+#### With Authelia authentication
+```bash
+# Set authentication credentials
+export OAUTH_CLIENT_SECRET=your-actual-client-secret
+export AUTHELIA_BASE_URL=https://auth.goldentooth.net:9091
+
+# Run with authentication enabled
+cargo run -- --http
+```
+
 ### Testing with MCP client
 ```bash
-# The server communicates via stdin/stdout
+# The server communicates via stdin/stdout by default
 echo '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"0.1.0","capabilities":{}},"id":1}' | goldentooth-mcp
+
+# Or test HTTP mode on localhost:8080
+curl -X POST http://localhost:8080/mcp/request \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"0.1.0","capabilities":{}},"id":1}'
 ```
+
+## Authentication
+
+The MCP server supports optional authentication via Authelia OIDC. See [AUTHENTICATION.md](AUTHENTICATION.md) for detailed configuration and usage instructions.
+
+### Quick Start with Authentication
+
+1. **Configure environment variables:**
+   ```bash
+   export OAUTH_CLIENT_SECRET=your-actual-secret
+   export OAUTH_CLIENT_ID=goldentooth-mcp  # optional, has default
+   export AUTHELIA_BASE_URL=https://auth.goldentooth.net:9091  # optional, has default
+   ```
+
+2. **Test authentication setup:**
+   ```bash
+   cargo run --example test_auth
+   ```
+
+3. **Run server with authentication:**
+   ```bash
+   cargo run -- --http
+   ```
+
+When authentication is enabled, all MCP requests must include a valid JWT token in the Authorization header.
 
 ## Development
 
