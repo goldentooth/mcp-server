@@ -56,6 +56,17 @@ jobs:
         path: target
         key: ${{ runner.os }}-${{ matrix.target }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
 
+    - name: Cache vendored OpenSSL
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry/src/*/openssl-sys-*/build
+          ~/.cargo/registry/src/*/openssl-src-*/
+          target/*/build/openssl-sys-*/
+        key: ${{ runner.os }}-${{ matrix.target }}-openssl-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.target }}-openssl-
+
     - name: Run tests
       run: cargo test --verbose
 
