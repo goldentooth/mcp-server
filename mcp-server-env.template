@@ -1,0 +1,15 @@
+# MCP Server Environment Configuration
+# Copy this to mcp-server-env and modify as needed
+
+# Authentication Configuration
+OAUTH_CLIENT_ID=goldentooth-mcp
+OAUTH_CLIENT_SECRET=changeme  # Set to actual client secret from Authelia
+AUTHELIA_BASE_URL=https://auth.goldentooth.net:9091
+OAUTH_REDIRECT_URI=https://mcp.goldentooth.net/callback
+
+# Server Configuration
+MCP_HTTP_MODE=true  # Enable HTTP mode for web-based authentication
+MCP_PORT=8080       # Port for HTTP server mode
+
+# Optional: Authorization header for testing
+# AUTHORIZATION=Bearer your-jwt-token-here

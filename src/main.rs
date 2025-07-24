@@ -7,7 +7,28 @@ use goldentooth_mcp::service::GoldentoothService;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let service = GoldentoothService::new();
+    // Initialize service with or without authentication
+    let service = if env::var("OAUTH_CLIENT_SECRET").is_ok()
+        && env::var("OAUTH_CLIENT_SECRET").unwrap() != "changeme"
+    {
+        // Authentication is configured, initialize with auth
+        match GoldentoothService::with_auth().await {
+            Ok(service) => {
+                println!("MCP server initialized with Authelia authentication");
+                service
+            }
+            Err(e) => {
+                eprintln!("Failed to initialize authentication: {}", e);
+                eprintln!("Falling back to no authentication mode");
+                GoldentoothService::new()
+            }
+        }
+    } else {
+        println!(
+            "MCP server initialized without authentication (set OAUTH_CLIENT_SECRET to enable)"
+        );
+        GoldentoothService::new()
+    };
 
     // Check for HTTP mode via environment variable or command line arg
     if env::var("MCP_HTTP_MODE").is_ok() || env::args().any(|arg| arg == "--http") {
