@@ -122,9 +122,16 @@ pub struct AuthService {
 
 impl AuthService {
     pub fn new(config: AuthConfig) -> Self {
+        // Configure HTTP client to use system certificate store with rustls
+        let client = Client::builder()
+            .use_rustls_tls()
+            .tls_built_in_root_certs(true)
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
         Self {
             config,
-            client: Client::new(),
+            client,
             oauth_client: None,
             discovery_cache: Arc::new(RwLock::new(None)),
             jwks_cache: Arc::new(RwLock::new(None)),
