@@ -14,8 +14,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Check if authentication is required
     if !auth_service.requires_auth() {
-        println!("Authentication is disabled (OAUTH_CLIENT_SECRET not set or is 'changeme')");
-        return Ok(());
+        println!("Authentication is disabled (OAUTH_CLIENT_SECRET not set or empty)");
+        return Ok(()) as Result<(), Box<dyn std::error::Error>>;
     }
 
     println!("Authentication is enabled, initializing...");
@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(_) => println!("✓ Successfully initialized OIDC client"),
         Err(e) => {
             eprintln!("✗ Failed to initialize OIDC client: {}", e);
-            return Err(e);
+            return Err(Box::new(e));
         }
     }
 
@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             eprintln!("✗ OIDC Discovery failed: {}", e);
-            return Err(e);
+            return Err(Box::new(e));
         }
     }
 
@@ -60,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             eprintln!("✗ JWKS retrieval failed: {}", e);
-            return Err(e);
+            return Err(Box::new(e));
         }
     }
 
@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             eprintln!("✗ Authorization URL generation failed: {}", e);
-            return Err(e);
+            return Err(Box::new(e));
         }
     }
 
@@ -103,5 +103,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n🎉 Authentication integration test completed successfully!");
-    Ok(())
+    Ok(()) as Result<(), Box<dyn std::error::Error>>
 }

@@ -1,4 +1,4 @@
-use crate::auth::{AuthConfig, AuthService};
+use crate::auth::{AuthConfig, AuthError, AuthService};
 use rmcp::{
     RoleServer, Service,
     model::{
@@ -31,7 +31,7 @@ impl GoldentoothService {
         GoldentoothService { auth_service }
     }
 
-    pub async fn with_auth() -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn with_auth() -> Result<Self, AuthError> {
         let auth_config = AuthConfig::default();
         let mut auth_service = AuthService::new(auth_config);
         auth_service.initialize().await?;
@@ -57,6 +57,7 @@ impl GoldentoothService {
                     match auth_service.validate_token(token).await {
                         Ok(claims) => Ok(Some(claims)),
                         Err(e) => {
+                            // Log the specific error for debugging, but return generic error for security
                             eprintln!("Authentication failed: {}", e);
                             Err(ErrorData {
                                 code: ErrorCode(-32002),
@@ -86,8 +87,17 @@ impl GoldentoothService {
     }
 
     fn extract_auth_header(&self, _context: &RequestContext<RoleServer>) -> Option<String> {
-        // This is a placeholder - actual implementation depends on how rmcp provides request metadata
-        // For now, we'll check environment variables as a fallback
+        // TODO: Extract authorization header from MCP request context
+        // This is a placeholder implementation until rmcp provides access to request metadata
+        //
+        // For HTTP mode, we would ideally extract from HTTP headers:
+        // context.headers().get("authorization").map(|h| h.to_string())
+        //
+        // For stdin/stdout mode, authentication would need to be handled differently,
+        // potentially through a session token or connection-level authentication
+
+        // Fallback: check environment variable for testing purposes
+        // This allows testing authentication without full HTTP integration
         std::env::var("AUTHORIZATION").ok()
     }
 }

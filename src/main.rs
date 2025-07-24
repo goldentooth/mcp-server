@@ -8,9 +8,7 @@ use goldentooth_mcp::service::GoldentoothService;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize service with or without authentication
-    let service = if env::var("OAUTH_CLIENT_SECRET").is_ok()
-        && env::var("OAUTH_CLIENT_SECRET").unwrap() != "changeme"
-    {
+    let service = if env::var("OAUTH_CLIENT_SECRET").is_ok() {
         // Authentication is configured, initialize with auth
         match GoldentoothService::with_auth().await {
             Ok(service) => {

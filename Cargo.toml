@@ -20,6 +20,7 @@ reqwest = { version = "0.12", features = ["json"] }
 oauth2 = "4.4"
 jsonwebtoken = "9.3"
 base64 = "0.22"
+thiserror = "2.0"
 
 [dev-dependencies]
 tokio-test = "0.4"
