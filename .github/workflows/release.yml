@@ -17,10 +17,10 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-22.04
+            os: ubuntu-latest
             name: goldentooth-mcp-x86_64-linux
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-22.04
+            os: ubuntu-latest
             name: goldentooth-mcp-aarch64-linux
     steps:
     - uses: actions/checkout@v4
@@ -56,17 +56,6 @@ jobs:
         path: target
         key: ${{ runner.os }}-${{ matrix.target }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Cache vendored OpenSSL
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry/src/*/openssl-sys-*/build
-          ~/.cargo/registry/src/*/openssl-src-*/
-          target/*/build/openssl-sys-*/
-        key: ${{ runner.os }}-${{ matrix.target }}-openssl-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-${{ matrix.target }}-openssl-
-
     - name: Run tests
       run: cargo test --verbose
 
@@ -78,7 +67,7 @@ jobs:
         if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
         fi
-        cargo build --release --target ${{ matrix.target }} --verbose
+        cargo build --release --target ${{ matrix.target }}
 
     - name: Prepare artifacts
       run: |
