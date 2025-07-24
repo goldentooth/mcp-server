@@ -111,7 +111,19 @@ async fn handle_request(
             .unwrap());
     }
 
-    // Only allow POST requests
+    // Handle health check endpoint
+    if req.method() == Method::GET && req.uri().path() == "/health" {
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("Content-Type", "application/json")
+            .header("Access-Control-Allow-Origin", "*")
+            .body(Full::new(Bytes::from(
+                r#"{"status":"healthy","service":"goldentooth-mcp"}"#,
+            )))
+            .unwrap());
+    }
+
+    // Only allow POST requests for MCP endpoints
     if req.method() != Method::POST {
         return Ok(Response::builder()
             .status(StatusCode::METHOD_NOT_ALLOWED)
@@ -377,5 +389,14 @@ mod tests {
         assert_eq!(json["id"], 5);
         assert_eq!(json["error"]["code"], -32600);
         assert_eq!(json["error"]["message"], "Invalid Request");
+    }
+
+    #[test]
+    fn test_health_endpoint_format() {
+        // Test that health endpoint returns proper JSON
+        let health_response = r#"{"status":"healthy","service":"goldentooth-mcp"}"#;
+        let json: Value = serde_json::from_str(health_response).unwrap();
+        assert_eq!(json["status"], "healthy");
+        assert_eq!(json["service"], "goldentooth-mcp");
     }
 }
