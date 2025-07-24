@@ -31,14 +31,16 @@ impl GoldentoothService {
         GoldentoothService { auth_service }
     }
 
-    pub async fn with_auth() -> Result<Self, AuthError> {
+    pub async fn with_auth() -> Result<(Self, AuthService), AuthError> {
         let auth_config = AuthConfig::default();
         let mut auth_service = AuthService::new(auth_config);
         auth_service.initialize().await?;
 
-        Ok(GoldentoothService {
-            auth_service: Some(auth_service),
-        })
+        let service = GoldentoothService {
+            auth_service: Some(auth_service.clone()),
+        };
+
+        Ok((service, auth_service))
     }
 
     pub fn is_auth_enabled(&self) -> bool {

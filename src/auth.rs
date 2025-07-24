@@ -6,7 +6,7 @@ use oauth2::{
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{
-    env,
+    env, fs,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -24,6 +24,8 @@ pub enum AuthError {
     InvalidConfig(String),
     #[error("JWKS key not found: {0}")]
     JwksKeyNotFound(String),
+    #[error("Certificate error: {0}")]
+    CertificateError(String),
 }
 
 pub type AuthResult<T> = Result<T, AuthError>;
@@ -61,7 +63,7 @@ impl Default for AuthConfig {
     fn default() -> Self {
         Self {
             authelia_base_url: env::var("AUTHELIA_BASE_URL")
-                .unwrap_or_else(|_| "https://auth.goldentooth.net:9091".to_string()),
+                .unwrap_or_else(|_| "https://auth.services.goldentooth.net".to_string()),
             client_id: env::var("OAUTH_CLIENT_ID")
                 .unwrap_or_else(|_| "goldentooth-mcp".to_string()),
             client_secret: env::var("OAUTH_CLIENT_SECRET").unwrap_or_else(|_| "".to_string()),
@@ -122,12 +124,36 @@ pub struct AuthService {
 
 impl AuthService {
     pub fn new(config: AuthConfig) -> Self {
-        // Configure HTTP client to use system certificate store with rustls
-        let client = Client::builder()
-            .use_rustls_tls()
-            .tls_built_in_root_certs(true)
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        // Configure HTTP client with custom certificate trust
+        let mut client_builder = Client::builder().use_rustls_tls();
+
+        // Load the cluster CA certificate if it exists
+        const CLUSTER_CA_PATH: &str = "/etc/ssl/certs/goldentooth.pem";
+        match fs::read_to_string(CLUSTER_CA_PATH) {
+            Ok(ca_cert_pem) => match reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()) {
+                Ok(ca_cert) => {
+                    client_builder = client_builder.add_root_certificate(ca_cert);
+                    eprintln!(
+                        "Successfully loaded cluster CA certificate from {}",
+                        CLUSTER_CA_PATH
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Failed to parse cluster CA certificate: {}", e);
+                }
+            },
+            Err(e) => {
+                eprintln!(
+                    "Cluster CA certificate not found at {}: {}",
+                    CLUSTER_CA_PATH, e
+                );
+            }
+        }
+
+        // Also include built-in root certificates for other domains
+        client_builder = client_builder.tls_built_in_root_certs(true);
+
+        let client = client_builder.build().unwrap_or_else(|_| Client::new());
 
         Self {
             config,
@@ -310,7 +336,7 @@ mod tests {
         let config = AuthConfig::default();
         assert_eq!(
             config.authelia_base_url,
-            "https://auth.goldentooth.net:9091"
+            "https://auth.services.goldentooth.net"
         );
         assert_eq!(config.client_id, "goldentooth-mcp");
         assert_eq!(config.redirect_uri, "https://mcp.goldentooth.net/callback");
