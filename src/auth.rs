@@ -261,7 +261,8 @@ impl AuthService {
         let discovery = self.discover_oidc_config().await?;
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_issuer(&[&discovery.issuer]);
-        validation.set_audience(&[&self.config.client_id]);
+        // Don't require audience for client_credentials tokens - they often don't have one
+        validation.validate_aud = false;
 
         // Decode and validate the token
         let token_data = decode::<Claims>(token, &decoding_key, &validation)?;
