@@ -17,10 +17,10 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-20.04
             name: goldentooth-mcp-x86_64-linux
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-20.04
             name: goldentooth-mcp-aarch64-linux
     steps:
     - uses: actions/checkout@v4
@@ -33,7 +33,7 @@ jobs:
         components: clippy
 
     - name: Install cross-compilation dependencies (Linux)
-      if: matrix.os == 'ubuntu-latest' && matrix.target == 'aarch64-unknown-linux-gnu'
+      if: contains(matrix.os, 'ubuntu') && matrix.target == 'aarch64-unknown-linux-gnu'
       run: |
         sudo apt-get update
         sudo apt-get install -y gcc-aarch64-linux-gnu
