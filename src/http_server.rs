@@ -92,7 +92,7 @@ impl HttpServer {
     }
 }
 
-async fn handle_request(
+pub async fn handle_request(
     req: Request<hyper::body::Incoming>,
     service: GoldentoothService,
     auth_service: Option<AuthService>,
@@ -420,7 +420,7 @@ fn create_json_error_response(status: StatusCode, error_message: &str) -> Respon
         .unwrap()
 }
 
-fn html_escape(input: &str) -> String {
+pub fn html_escape(input: &str) -> String {
     input
         .replace('&', "&amp;")
         .replace('<', "&lt;")

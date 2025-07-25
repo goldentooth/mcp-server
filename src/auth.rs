@@ -1,7 +1,8 @@
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use oauth2::{
-    AccessToken, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, RedirectUrl,
-    RefreshToken, Scope, TokenResponse, TokenUrl, basic::BasicClient, reqwest::async_http_client,
+    AccessToken, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, HttpRequest,
+    HttpResponse, RedirectUrl, RefreshToken, RequestTokenError, Scope, TokenResponse, TokenUrl,
+    basic::BasicClient,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -68,7 +69,7 @@ impl Default for AuthConfig {
                 .unwrap_or_else(|_| "goldentooth-mcp".to_string()),
             client_secret: env::var("OAUTH_CLIENT_SECRET").unwrap_or_else(|_| "".to_string()),
             redirect_uri: env::var("OAUTH_REDIRECT_URI")
-                .unwrap_or_else(|_| "https://mcp.goldentooth.net/callback".to_string()),
+                .unwrap_or_else(|_| "https://mcp.services.goldentooth.net/callback".to_string()),
         }
     }
 }
@@ -123,6 +124,82 @@ pub struct AuthService {
 }
 
 impl AuthService {
+    // Custom HTTP client that uses our configured reqwest client with cluster CA
+    async fn custom_http_client(
+        client: Client,
+        request: HttpRequest,
+    ) -> Result<
+        HttpResponse,
+        RequestTokenError<
+            oauth2::reqwest::Error<reqwest::Error>,
+            oauth2::StandardErrorResponse<oauth2::basic::BasicErrorResponseType>,
+        >,
+    > {
+        // Convert oauth2::http::Method to reqwest::Method
+        let method = match request.method.as_str() {
+            "GET" => reqwest::Method::GET,
+            "POST" => reqwest::Method::POST,
+            "PUT" => reqwest::Method::PUT,
+            "DELETE" => reqwest::Method::DELETE,
+            "HEAD" => reqwest::Method::HEAD,
+            "OPTIONS" => reqwest::Method::OPTIONS,
+            "PATCH" => reqwest::Method::PATCH,
+            _ => {
+                return Err(RequestTokenError::Other(
+                    "Unsupported HTTP method".to_string(),
+                ));
+            }
+        };
+
+        let mut req_builder = client.request(method, request.url.as_str());
+
+        // Add headers
+        for (name, value) in request.headers {
+            if let Some(header_name) = name {
+                req_builder = req_builder.header(header_name.as_str(), value.to_str().unwrap());
+            }
+        }
+
+        // Add body if present
+        if !request.body.is_empty() {
+            req_builder = req_builder.body(request.body);
+        }
+
+        let response = req_builder
+            .send()
+            .await
+            .map_err(oauth2::reqwest::Error::Reqwest)
+            .map_err(RequestTokenError::Request)?;
+
+        let status_code = response.status();
+        let headers = response.headers().clone();
+        let body = response
+            .bytes()
+            .await
+            .map_err(oauth2::reqwest::Error::Reqwest)
+            .map_err(RequestTokenError::Request)?;
+
+        // Convert reqwest types to oauth2::http types
+        let oauth_status = oauth2::http::StatusCode::from_u16(status_code.as_u16())
+            .map_err(|_| RequestTokenError::Other("Invalid status code".to_string()))?;
+
+        let mut oauth_headers = oauth2::http::HeaderMap::new();
+        for (name, value) in headers.iter() {
+            if let (Ok(header_name), Ok(header_value)) = (
+                oauth2::http::HeaderName::from_bytes(name.as_str().as_bytes()),
+                oauth2::http::HeaderValue::from_bytes(value.as_bytes()),
+            ) {
+                oauth_headers.insert(header_name, header_value);
+            }
+        }
+
+        Ok(HttpResponse {
+            status_code: oauth_status,
+            headers: oauth_headers,
+            body: body.to_vec(),
+        })
+    }
+
     pub fn new(config: AuthConfig) -> Self {
         // Configure HTTP client with custom certificate trust
         let mut client_builder = Client::builder().use_rustls_tls();
@@ -298,9 +375,16 @@ impl AuthService {
             .as_ref()
             .ok_or(AuthError::ClientNotInitialized)?;
 
+        // Create a closure that captures our HTTP client
+        let client = self.client.clone();
+        let http_client = |request: HttpRequest| {
+            let client = client.clone();
+            Box::pin(async move { Self::custom_http_client(client, request).await })
+        };
+
         let token_result = oauth_client
             .exchange_code(AuthorizationCode::new(code.to_string()))
-            .request_async(async_http_client)
+            .request_async(http_client)
             .await
             .map_err(|e| AuthError::InvalidConfig(format!("Token exchange failed: {}", e)))?;
 
@@ -313,9 +397,16 @@ impl AuthService {
             .as_ref()
             .ok_or(AuthError::ClientNotInitialized)?;
 
+        // Create a closure that captures our HTTP client
+        let client = self.client.clone();
+        let http_client = |request: HttpRequest| {
+            let client = client.clone();
+            Box::pin(async move { Self::custom_http_client(client, request).await })
+        };
+
         let token_result = oauth_client
             .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
-            .request_async(async_http_client)
+            .request_async(http_client)
             .await
             .map_err(|e| AuthError::InvalidConfig(format!("Token refresh failed: {}", e)))?;
 
@@ -340,7 +431,10 @@ mod tests {
             "https://auth.services.goldentooth.net"
         );
         assert_eq!(config.client_id, "goldentooth-mcp");
-        assert_eq!(config.redirect_uri, "https://mcp.goldentooth.net/callback");
+        assert_eq!(
+            config.redirect_uri,
+            "https://mcp.services.goldentooth.net/callback"
+        );
     }
 
     #[test]
