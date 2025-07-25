@@ -407,19 +407,29 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
     let id = request.get("id");
 
     match method {
-        "initialize" => serde_json::json!({
-            "jsonrpc": "2.0",
-            "result": {
-                "protocolVersion": "0.1.0",
-                "capabilities": {},
-                "serverInfo": {
-                    "name": "goldentooth-mcp",
-                    "version": "0.0.23"
-                }
-            },
-            "id": id
-        })
-        .to_string(),
+        "initialize" => {
+            let info = service.get_info();
+            // Extract the version string from ProtocolVersion("2024-11-05") format
+            let version_str = format!("{:?}", info.protocol_version);
+            let protocol_version = version_str
+                .strip_prefix("ProtocolVersion(\"")
+                .and_then(|s| s.strip_suffix("\")"))
+                .unwrap_or("2024-11-05"); // fallback to current spec version
+
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "result": {
+                    "protocolVersion": protocol_version,
+                    "capabilities": info.capabilities,
+                    "serverInfo": {
+                        "name": info.server_info.name,
+                        "version": info.server_info.version
+                    }
+                },
+                "id": id
+            })
+            .to_string()
+        }
         "server/get_info" => {
             let info = service.get_info();
             serde_json::json!({
