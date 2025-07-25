@@ -123,6 +123,14 @@ pub async fn handle_request(
             .unwrap());
     }
 
+    // Handle OAuth well-known endpoints (public, no authentication required)
+    if (req.uri().path() == "/.well-known/oauth-authorization-server"
+        || req.uri().path() == "/.well-known/openid-configuration")
+        && (req.method() == Method::GET || req.method() == Method::HEAD)
+    {
+        return handle_oauth_metadata(auth_service).await;
+    }
+
     // Handle authentication endpoints (public, no authentication required)
     if req.uri().path().starts_with("/auth/") {
         return handle_auth_request(req, auth_service).await;
@@ -456,6 +464,59 @@ async fn parse_json_body(
     };
 
     Ok(request_data)
+}
+
+async fn handle_oauth_metadata(
+    auth_service: Option<AuthService>,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let auth = match auth_service {
+        Some(auth) => auth,
+        None => {
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .header("Content-Type", "application/json")
+                .header("Access-Control-Allow-Origin", "*")
+                .body(Full::new(Bytes::from(
+                    serde_json::json!({"error": "OAuth not configured"}).to_string(),
+                )))
+                .unwrap());
+        }
+    };
+
+    // Get OIDC discovery config and map to OAuth metadata format
+    match auth.discover_oidc_config().await {
+        Ok(discovery) => {
+            // OAuth 2.0 Authorization Server Metadata (RFC 8414)
+            let metadata = serde_json::json!({
+                "issuer": discovery.issuer,
+                "authorization_endpoint": discovery.authorization_endpoint,
+                "token_endpoint": discovery.token_endpoint,
+                "jwks_uri": discovery.jwks_uri,
+                "response_types_supported": discovery.response_types_supported,
+                "grant_types_supported": discovery.grant_types_supported,
+                "scopes_supported": discovery.scopes_supported,
+                "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
+                "code_challenge_methods_supported": ["S256", "plain"],
+                "service_documentation": "https://docs.goldentooth.net/mcp",
+            });
+
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "application/json")
+                .header("Access-Control-Allow-Origin", "*")
+                .body(Full::new(Bytes::from(metadata.to_string())))
+                .unwrap())
+        }
+        Err(e) => Ok(Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .header("Content-Type", "application/json")
+            .header("Access-Control-Allow-Origin", "*")
+            .body(Full::new(Bytes::from(format!(
+                r#"{{"error":"Failed to fetch OAuth metadata: {}"}}"#,
+                e
+            ))))
+            .unwrap()),
+    }
 }
 
 async fn handle_auth_request(
