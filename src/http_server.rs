@@ -134,26 +134,18 @@ async fn handle_request(
         let query = req.uri().query().unwrap_or("");
         let mut params = std::collections::HashMap::new();
 
-        // Simple query string parsing
+        // Proper query string parsing with URL decoding
         for pair in query.split('&') {
             if let Some((key, value)) = pair.split_once('=') {
-                params.insert(
-                    key.to_string(),
-                    value
-                        .replace('+', " ")
-                        .replace("%20", " ")
-                        .replace("%2C", ",")
-                        .replace("%2F", "/")
-                        .replace("%3A", ":")
-                        .replace("%3F", "?")
-                        .replace("%3D", "=")
-                        .replace("%26", "&"),
-                );
+                let decoded_key = urlencoding::decode(key).unwrap_or_else(|_| key.into());
+                let decoded_value = urlencoding::decode(value).unwrap_or_else(|_| value.into());
+                params.insert(decoded_key.to_string(), decoded_value.to_string());
             }
         }
 
         if let Some(code) = params.get("code") {
-            // Display the authorization code for the user to copy
+            // Display the authorization code for the user to copy (HTML-escaped for security)
+            let escaped_code = html_escape(code);
             let html = format!(
                 r#"<!DOCTYPE html>
 <html>
@@ -200,7 +192,7 @@ async fn handle_request(
     </script>
 </body>
 </html>"#,
-                code
+                escaped_code
             );
 
             return Ok(Response::builder()
@@ -209,8 +201,10 @@ async fn handle_request(
                 .body(Full::new(Bytes::from(html)))
                 .unwrap());
         } else if let Some(error) = params.get("error") {
-            // Handle OAuth error
+            // Handle OAuth error (HTML-escaped for security)
             let error_desc = params.get("error_description").unwrap_or(error);
+            let escaped_error = html_escape(error);
+            let escaped_error_desc = html_escape(error_desc);
             let html = format!(
                 r#"<!DOCTYPE html>
 <html>
@@ -235,7 +229,7 @@ async fn handle_request(
     <p><a href="/">Try again</a></p>
 </body>
 </html>"#,
-                error, error_desc
+                escaped_error, escaped_error_desc
             );
 
             return Ok(Response::builder()
@@ -424,6 +418,15 @@ fn create_json_error_response(status: StatusCode, error_message: &str) -> Respon
             serde_json::json!({"error": error_message}).to_string(),
         )))
         .unwrap()
+}
+
+fn html_escape(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
 }
 
 async fn parse_json_body(
@@ -751,6 +754,20 @@ mod tests {
                 .get("Access-Control-Allow-Origin")
                 .unwrap(),
             "*"
+        );
+    }
+
+    #[test]
+    fn test_html_escape() {
+        // Test HTML escaping function
+        assert_eq!(html_escape("normal text"), "normal text");
+        assert_eq!(html_escape("<script>"), "&lt;script&gt;");
+        assert_eq!(html_escape("A & B"), "A &amp; B");
+        assert_eq!(html_escape("\"quoted\""), "&quot;quoted&quot;");
+        assert_eq!(html_escape("'single'"), "&#x27;single&#x27;");
+        assert_eq!(
+            html_escape("<script>alert('XSS')</script>"),
+            "&lt;script&gt;alert(&#x27;XSS&#x27;)&lt;/script&gt;"
         );
     }
 }
