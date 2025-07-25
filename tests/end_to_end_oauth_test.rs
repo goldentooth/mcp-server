@@ -520,8 +520,8 @@ async fn test_claude_code_discovery_scenario() {
         .await
         .expect("Failed to make POST request");
 
-    // Should return 401 because it falls through to main handler which requires auth
-    assert_eq!(post_response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    // Should return 200 because auth service is configured and can provide OAuth metadata
+    assert_eq!(post_response.status(), reqwest::StatusCode::OK);
 
     println!("✅ Claude Code discovery scenario test passed - HTTP 405 error fixed!");
 }
