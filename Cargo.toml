@@ -8,7 +8,7 @@ description = "MCP server for Goldentooth cluster management"
 license = "Unlicense"
 
 [dependencies]
-rmcp = { version = "0.2.0", features = ["server"] }
+rmcp = { version = "0.3.0", features = ["server"] }
 tokio = { version = "1.46.1", features = [
   "macros",
   "rt-multi-thread",
