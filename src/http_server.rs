@@ -248,6 +248,7 @@ pub async fn handle_request(
                 .unwrap());
         }
     }
+
     // Only allow POST requests for MCP endpoints
     if req.method() != Method::POST {
         return Ok(Response::builder()
@@ -492,10 +493,10 @@ async fn handle_auth_request(
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .header("Content-Type", "application/json")
                     .header("Access-Control-Allow-Origin", "*")
-                    .body(Full::new(Bytes::from(
-                        serde_json::json!({"error": format!("OIDC discovery failed: {}", e)})
-                            .to_string(),
-                    )))
+                    .body(Full::new(Bytes::from(format!(
+                        r#"{{"error":"OIDC discovery failed: {}"}}"#,
+                        e
+                    ))))
                     .unwrap()),
             }
         }
@@ -517,26 +518,54 @@ async fn handle_auth_request(
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .header("Content-Type", "application/json")
                     .header("Access-Control-Allow-Origin", "*")
-                    .body(Full::new(Bytes::from(
-                        serde_json::json!({"error": format!("Failed to generate authorization URL: {}", e)}).to_string()
-                    )))
+                    .body(Full::new(Bytes::from(format!(
+                        r#"{{"error":"Failed to generate authorization URL: {}"}}"#,
+                        e
+                    ))))
                     .unwrap()),
             }
         }
         (&Method::POST, "/auth/token") => {
             // Exchange authorization code for token
-            let request_data = match parse_json_body(req).await {
+            let body = match req.collect().await {
+                Ok(body) => body.to_bytes(),
+                Err(_) => {
+                    return Ok(Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .header("Content-Type", "application/json")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(Full::new(Bytes::from(
+                            r#"{"error":"Failed to read request body"}"#,
+                        )))
+                        .unwrap());
+                }
+            };
+
+            let request_data: serde_json::Value = match serde_json::from_slice(&body) {
                 Ok(data) => data,
-                Err(response) => return Ok(response),
+                Err(_) => {
+                    return Ok(Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .header("Content-Type", "application/json")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(Full::new(Bytes::from(
+                            r#"{"error":"Invalid JSON in request body"}"#,
+                        )))
+                        .unwrap());
+                }
             };
 
             let code = match request_data.get("code").and_then(|c| c.as_str()) {
                 Some(code) => code,
                 None => {
-                    return Ok(create_json_error_response(
-                        StatusCode::BAD_REQUEST,
-                        "Missing 'code' parameter",
-                    ));
+                    return Ok(Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .header("Content-Type", "application/json")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(Full::new(Bytes::from(
+                            r#"{"error":"Missing 'code' parameter"}"#,
+                        )))
+                        .unwrap());
                 }
             };
 
@@ -558,27 +587,54 @@ async fn handle_auth_request(
                     .status(StatusCode::BAD_REQUEST)
                     .header("Content-Type", "application/json")
                     .header("Access-Control-Allow-Origin", "*")
-                    .body(Full::new(Bytes::from(
-                        serde_json::json!({"error": format!("Token exchange failed: {}", e)})
-                            .to_string(),
-                    )))
+                    .body(Full::new(Bytes::from(format!(
+                        r#"{{"error":"Token exchange failed: {}"}}"#,
+                        e
+                    ))))
                     .unwrap()),
             }
         }
         (&Method::POST, "/auth/refresh") => {
             // Refresh access token
-            let request_data = match parse_json_body(req).await {
+            let body = match req.collect().await {
+                Ok(body) => body.to_bytes(),
+                Err(_) => {
+                    return Ok(Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .header("Content-Type", "application/json")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(Full::new(Bytes::from(
+                            r#"{"error":"Failed to read request body"}"#,
+                        )))
+                        .unwrap());
+                }
+            };
+
+            let request_data: serde_json::Value = match serde_json::from_slice(&body) {
                 Ok(data) => data,
-                Err(response) => return Ok(response),
+                Err(_) => {
+                    return Ok(Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .header("Content-Type", "application/json")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(Full::new(Bytes::from(
+                            r#"{"error":"Invalid JSON in request body"}"#,
+                        )))
+                        .unwrap());
+                }
             };
 
             let refresh_token = match request_data.get("refresh_token").and_then(|t| t.as_str()) {
                 Some(token) => token,
                 None => {
-                    return Ok(create_json_error_response(
-                        StatusCode::BAD_REQUEST,
-                        "Missing 'refresh_token' parameter",
-                    ));
+                    return Ok(Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .header("Content-Type", "application/json")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(Full::new(Bytes::from(
+                            r#"{"error":"Missing 'refresh_token' parameter"}"#,
+                        )))
+                        .unwrap());
                 }
             };
 
@@ -600,10 +656,10 @@ async fn handle_auth_request(
                     .status(StatusCode::BAD_REQUEST)
                     .header("Content-Type", "application/json")
                     .header("Access-Control-Allow-Origin", "*")
-                    .body(Full::new(Bytes::from(
-                        serde_json::json!({"error": format!("Token refresh failed: {}", e)})
-                            .to_string(),
-                    )))
+                    .body(Full::new(Bytes::from(format!(
+                        r#"{{"error":"Token refresh failed: {}"}}"#,
+                        e
+                    ))))
                     .unwrap()),
             }
         }
