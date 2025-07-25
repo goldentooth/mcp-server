@@ -410,6 +410,7 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
     }
 }
 
+#[allow(dead_code)]
 fn create_json_error_response(status: StatusCode, error_message: &str) -> Response<Full<Bytes>> {
     Response::builder()
         .status(status)
@@ -430,6 +431,7 @@ pub fn html_escape(input: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
+#[allow(dead_code)]
 async fn parse_json_body(
     req: Request<hyper::body::Incoming>,
 ) -> Result<serde_json::Value, Response<Full<Bytes>>> {
@@ -569,8 +571,19 @@ async fn handle_auth_request(
                 }
             };
 
+            let code_preview = if code.len() > 40 {
+                format!("{}...{}", &code[..20], &code[code.len() - 20..])
+            } else {
+                code.to_string()
+            };
+            println!(
+                "🔄 HTTP: Processing token exchange request with code: {}",
+                code_preview
+            );
+
             match auth.exchange_code_for_token(code).await {
                 Ok(access_token) => {
+                    println!("✅ HTTP: Token exchange successful, returning access token");
                     let response_data = serde_json::json!({
                         "access_token": access_token.secret(),
                         "token_type": "Bearer",
@@ -583,15 +596,21 @@ async fn handle_auth_request(
                         .body(Full::new(Bytes::from(response_data.to_string())))
                         .unwrap())
                 }
-                Err(e) => Ok(Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .header("Content-Type", "application/json")
-                    .header("Access-Control-Allow-Origin", "*")
-                    .body(Full::new(Bytes::from(format!(
-                        r#"{{"error":"Token exchange failed: {}"}}"#,
+                Err(e) => {
+                    println!(
+                        "❌ HTTP: Token exchange failed with detailed error: {:?}",
                         e
-                    ))))
-                    .unwrap()),
+                    );
+                    Ok(Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .header("Content-Type", "application/json")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(Full::new(Bytes::from(format!(
+                            r#"{{"error":"DETAILED_ERROR: {}"}}"#,
+                            e
+                        ))))
+                        .unwrap())
+                }
             }
         }
         (&Method::POST, "/auth/refresh") => {
