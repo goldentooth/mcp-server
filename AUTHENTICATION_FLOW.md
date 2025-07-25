@@ -528,3 +528,78 @@ async fn validate_token(&self, token: &str) -> AuthResult<Claims> {
 ```
 
 This change will enable Claude Code to successfully authenticate with the Goldentooth MCP Server using standard OAuth 2.0 access tokens.
+
+## Deployment and Configuration
+
+### Environment Variables
+
+The MCP server authentication is configured via environment variables:
+
+```bash
+# Required for authentication
+OAUTH_CLIENT_SECRET=your-actual-client-secret-here
+
+# Optional (have sensible defaults)
+OAUTH_CLIENT_ID=goldentooth-mcp
+AUTHELIA_BASE_URL=https://auth.services.goldentooth.net
+OAUTH_REDIRECT_URI=https://mcp.services.goldentooth.net/callback
+```
+
+### Ansible Deployment
+
+The MCP server authentication is automatically configured when deployed via Ansible:
+
+```bash
+# Deploy MCP server with authentication
+goldentooth setup_mcp_server
+```
+
+The Ansible role configures the systemd service with the appropriate environment variables from the vault.
+
+### Manual Testing Commands
+
+```bash
+# Test without authentication (should work)
+cargo run
+
+# Test with authentication enabled
+OAUTH_CLIENT_SECRET=real-secret cargo run
+
+# Test specific token validation
+GOLDENTOOTH_TEST_TOKEN=your-token-here cargo test test_with_real_token_if_available -- --nocapture
+
+# Full integration test with live Authelia
+cargo test --test complete_auth_flow_test -- --nocapture
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **DNS Resolution**: Ensure `auth.services.goldentooth.net` resolves correctly
+2. **Certificate Issues**: Verify TLS certificates are valid and cluster CA is installed
+3. **Clock Skew**: Ensure system clocks are synchronized (JWT exp/iat validation)
+4. **Network Connectivity**: Check firewall rules and network routing
+5. **Token Format**: Opaque tokens use introspection, JWT tokens use signature validation
+
+### Debug Mode
+
+Enable debug logging for detailed error information:
+
+```bash
+RUST_LOG=debug cargo run
+```
+
+### Authentication Disabled Mode
+
+If `OAUTH_CLIENT_SECRET` is not set, authentication is disabled and all requests are allowed without tokens.
+
+### API Endpoints
+
+When authentication is enabled, the MCP server exposes:
+
+- `GET /.well-known/oauth-authorization-server` - OAuth metadata discovery
+- `GET /.well-known/openid-configuration` - OIDC configuration
+- `POST /auth/token` - Exchange authorization code for token
+- `GET /callback` - OAuth callback handler (displays auth code)
+- `POST /mcp/request` - Authenticated MCP requests
