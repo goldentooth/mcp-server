@@ -301,7 +301,7 @@ pub async fn handle_request(
             .unwrap());
     }
 
-    // Extract headers for authentication
+    // Extract headers for authentication first (before consuming req)
     let mut headers = HashMap::new();
     for (name, value) in req.headers() {
         if let Ok(value_str) = value.to_str() {
@@ -309,71 +309,7 @@ pub async fn handle_request(
         }
     }
 
-    println!(
-        "🔐 AUTH: Extracted headers: {:?}",
-        headers.keys().collect::<Vec<_>>()
-    );
-
-    // Check authentication if enabled
-    if let Some(ref auth) = auth_service {
-        println!("🔒 AUTH: Authentication service enabled, checking headers...");
-        if let Some(auth_header) = headers.get("authorization") {
-            println!(
-                "🔑 AUTH: Found authorization header: {}...",
-                if auth_header.len() > 20 {
-                    &auth_header[..20]
-                } else {
-                    auth_header
-                }
-            );
-            if let Some(token) = auth_header.strip_prefix("Bearer ") {
-                println!("🎫 AUTH: Extracted Bearer token (length: {})", token.len());
-                match auth.validate_token(token).await {
-                    Ok(claims) => {
-                        println!(
-                            "✅ AUTH: Token validation successful for user: {}",
-                            claims.sub
-                        );
-                        // Authentication successful, continue
-                    }
-                    Err(e) => {
-                        println!("❌ AUTH: Token validation failed: {}", e);
-                        eprintln!("Authentication failed: {}", e);
-                        return Ok(Response::builder()
-                            .status(StatusCode::UNAUTHORIZED)
-                            .header("Access-Control-Allow-Origin", "*")
-                            .body(Full::new(Bytes::from(format!(
-                                "{{\"error\":\"Authentication failed: {}\"}}",
-                                e
-                            ))))
-                            .unwrap());
-                    }
-                }
-            } else {
-                println!("❌ AUTH: Authorization header missing 'Bearer ' prefix");
-                return Ok(Response::builder()
-                    .status(StatusCode::UNAUTHORIZED)
-                    .header("Access-Control-Allow-Origin", "*")
-                    .body(Full::new(Bytes::from(
-                        "{\"error\":\"Invalid authorization header format\"}",
-                    )))
-                    .unwrap());
-            }
-        } else {
-            println!("❌ AUTH: No authorization header found in request");
-            return Ok(Response::builder()
-                .status(StatusCode::UNAUTHORIZED)
-                .header("Access-Control-Allow-Origin", "*")
-                .body(Full::new(Bytes::from(
-                    "{\"error\":\"Missing authorization header\"}",
-                )))
-                .unwrap());
-        }
-    } else {
-        println!("🔓 AUTH: No authentication service configured, proceeding without auth");
-    }
-
-    // Read request body
+    // Read request body to determine if this is an initialize request
     let body = match req.collect().await {
         Ok(body) => body.to_bytes(),
         Err(e) => {
@@ -387,6 +323,88 @@ pub async fn handle_request(
                 .unwrap());
         }
     };
+
+    // Parse JSON to check if this is an initialize request
+    let is_initialize_request = if let Ok(json) = serde_json::from_slice::<Value>(&body) {
+        json.get("method")
+            .and_then(|m| m.as_str())
+            .map(|method| method == "initialize")
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    println!("🔍 MCP: Is initialize request: {}", is_initialize_request);
+
+    println!(
+        "🔐 AUTH: Extracted headers: {:?}",
+        headers.keys().collect::<Vec<_>>()
+    );
+
+    // Check authentication if enabled, but skip for initialize requests
+    if let Some(ref auth) = auth_service {
+        if !is_initialize_request {
+            println!("🔒 AUTH: Authentication service enabled, checking headers...");
+            if let Some(auth_header) = headers.get("authorization") {
+                println!(
+                    "🔑 AUTH: Found authorization header: {}...",
+                    if auth_header.len() > 20 {
+                        &auth_header[..20]
+                    } else {
+                        auth_header
+                    }
+                );
+                if let Some(token) = auth_header.strip_prefix("Bearer ") {
+                    println!("🎫 AUTH: Extracted Bearer token (length: {})", token.len());
+                    match auth.validate_token(token).await {
+                        Ok(claims) => {
+                            println!(
+                                "✅ AUTH: Token validation successful for user: {}",
+                                claims.sub
+                            );
+                            // Authentication successful, continue
+                        }
+                        Err(e) => {
+                            println!("❌ AUTH: Token validation failed: {}", e);
+                            eprintln!("Authentication failed: {}", e);
+                            return Ok(Response::builder()
+                                .status(StatusCode::UNAUTHORIZED)
+                                .header("Access-Control-Allow-Origin", "*")
+                                .body(Full::new(Bytes::from(format!(
+                                    "{{\"error\":\"Authentication failed: {}\"}}",
+                                    e
+                                ))))
+                                .unwrap());
+                        }
+                    }
+                } else {
+                    println!("❌ AUTH: Authorization header missing 'Bearer ' prefix");
+                    return Ok(Response::builder()
+                        .status(StatusCode::UNAUTHORIZED)
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(Full::new(Bytes::from(
+                            "{\"error\":\"Invalid authorization header format\"}",
+                        )))
+                        .unwrap());
+                }
+            } else {
+                println!("❌ AUTH: No authorization header found in request");
+                return Ok(Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .header("Access-Control-Allow-Origin", "*")
+                    .body(Full::new(Bytes::from(
+                        "{\"error\":\"Missing authorization header\"}",
+                    )))
+                    .unwrap());
+            }
+        } else {
+            println!("🚀 AUTH: Skipping authentication for initialize request");
+        }
+    } else {
+        println!("🔓 AUTH: No authentication service configured, proceeding without auth");
+    }
+
+    // Body is already read above
 
     let body_str = String::from_utf8_lossy(&body);
     println!(
