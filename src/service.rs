@@ -2,11 +2,16 @@ use crate::auth::{AuthConfig, AuthError, AuthService};
 use rmcp::{
     RoleServer, Service,
     model::{
-        ErrorCode, ErrorData, Implementation, InitializeResult, ProtocolVersion, ServerCapabilities,
+        ErrorCode, ErrorData, Implementation, InitializeResult, ProtocolVersion,
+        ServerCapabilities, Tool, ToolsCapability,
     },
     service::{NotificationContext, RequestContext, ServiceRole},
 };
+use serde_json::{Map, Value, json};
+use std::borrow::Cow;
 use std::future::Future;
+use std::process::Command;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct GoldentoothService {
@@ -88,6 +93,81 @@ impl GoldentoothService {
         }
     }
 
+    async fn handle_tool_request(
+        &self,
+        _request: <RoleServer as ServiceRole>::PeerReq,
+        _context: &RequestContext<RoleServer>,
+    ) -> Result<<RoleServer as ServiceRole>::Resp, ErrorData> {
+        // Parse the request to determine if it's a tool call
+        // For now, we'll implement basic tool handling
+        // This is a placeholder - the actual implementation will depend on rmcp's request structure
+
+        // Since we can't directly access the request structure in this context,
+        // we'll need to implement this based on the rmcp documentation
+        // For now, return an error indicating the method isn't fully implemented
+        Err(ErrorData {
+            code: ErrorCode(-32601), // Method not found
+            message: "Tool request handling not yet fully implemented - rmcp integration pending"
+                .into(),
+            data: None,
+        })
+    }
+
+    #[allow(dead_code)]
+    async fn execute_goldentooth_command(&self, args: &[&str]) -> Result<String, String> {
+        let output = Command::new("goldentooth")
+            .args(args)
+            .output()
+            .map_err(|e| format!("Failed to execute goldentooth command: {}", e))?;
+
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(format!("Command failed: {}", stderr))
+        }
+    }
+
+    #[allow(dead_code)]
+    async fn handle_cluster_ping(&self) -> Result<Value, ErrorData> {
+        match self.execute_goldentooth_command(&["ping", "all"]).await {
+            Ok(output) => Ok(json!({
+                "success": true,
+                "output": output,
+                "tool": "cluster_ping"
+            })),
+            Err(error) => Ok(json!({
+                "success": false,
+                "error": error,
+                "tool": "cluster_ping"
+            })),
+        }
+    }
+
+    #[allow(dead_code)]
+    async fn handle_cluster_status(&self, node: Option<&str>) -> Result<Value, ErrorData> {
+        let args = if let Some(node_name) = node {
+            vec!["uptime", node_name]
+        } else {
+            vec!["uptime", "all"]
+        };
+
+        match self.execute_goldentooth_command(&args).await {
+            Ok(output) => Ok(json!({
+                "success": true,
+                "output": output,
+                "tool": "cluster_status",
+                "node": node
+            })),
+            Err(error) => Ok(json!({
+                "success": false,
+                "error": error,
+                "tool": "cluster_status",
+                "node": node
+            })),
+        }
+    }
+
     fn extract_auth_header(&self, _context: &RequestContext<RoleServer>) -> Option<String> {
         // TODO: Extract authorization header from MCP request context
         // This is a placeholder implementation until rmcp provides access to request metadata
@@ -116,13 +196,8 @@ impl Service<RoleServer> for GoldentoothService {
             // Validate authentication if enabled
             let _claims = self.validate_request_auth(&context).await?;
 
-            // TODO: Implement proper request handling based on MCP protocol
-            // For now, return method not found error instead of panicking with unimplemented!()
-            Err(ErrorData {
-                code: ErrorCode(-32601), // Method not found
-                message: "Method not implemented".into(),
-                data: None,
-            })
+            // Handle tool calls based on the request
+            self.handle_tool_request(_request, &context).await
         }
     }
 
@@ -136,14 +211,59 @@ impl Service<RoleServer> for GoldentoothService {
     }
 
     fn get_info(&self) -> <RoleServer as ServiceRole>::Info {
+        let _tools = [
+            Tool {
+                name: Cow::Borrowed("cluster_ping"),
+                description: Some(Cow::Borrowed(
+                    "Ping all nodes in the goldentooth cluster to check their status",
+                )),
+                input_schema: {
+                    let mut schema = Map::new();
+                    schema.insert("type".to_string(), json!("object"));
+                    schema.insert("properties".to_string(), json!({}));
+                    schema.insert("required".to_string(), json!([]));
+                    Arc::new(schema)
+                },
+                annotations: None,
+            },
+            Tool {
+                name: Cow::Borrowed("cluster_status"),
+                description: Some(Cow::Borrowed(
+                    "Get detailed status information for all cluster nodes",
+                )),
+                input_schema: {
+                    let mut schema = Map::new();
+                    schema.insert("type".to_string(), json!("object"));
+                    let mut properties = Map::new();
+                    let mut node_prop = Map::new();
+                    node_prop.insert("type".to_string(), json!("string"));
+                    node_prop.insert("description".to_string(), json!("Optional specific node to check (e.g., 'allyrion', 'jast'). If not provided, checks all nodes."));
+                    properties.insert("node".to_string(), json!(node_prop));
+                    schema.insert("properties".to_string(), json!(properties));
+                    schema.insert("required".to_string(), json!([]));
+                    Arc::new(schema)
+                },
+                annotations: None,
+            },
+        ];
+
         InitializeResult {
             protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ServerCapabilities::default(),
+            capabilities: ServerCapabilities {
+                tools: Some(ToolsCapability {
+                    list_changed: None,
+                }),
+                resources: None,
+                prompts: None,
+                logging: None,
+                completions: None,
+                experimental: None,
+            },
             server_info: Implementation {
                 name: "goldentooth-mcp".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
-            instructions: None,
+            instructions: Some("Goldentooth cluster management MCP server. Provides tools to interact with the Raspberry Pi cluster infrastructure.".to_string()),
         }
     }
 }
@@ -168,7 +288,7 @@ mod tests {
         // Version should match Cargo.toml - don't hardcode it
         assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(info.protocol_version, ProtocolVersion::V_2024_11_05);
-        assert!(info.instructions.is_none());
+        assert!(info.instructions.is_some());
     }
 
     #[test]
@@ -177,12 +297,13 @@ mod tests {
         let info = service.get_info();
         let capabilities = info.capabilities;
 
-        // Test default capabilities
-        // As we add features, we'll update these tests
-        assert!(capabilities.tools.is_none());
+        // Test capabilities - we now have tools support
+        assert!(capabilities.tools.is_some());
         assert!(capabilities.resources.is_none());
         assert!(capabilities.prompts.is_none());
         assert!(capabilities.logging.is_none());
+        assert!(capabilities.completions.is_none());
+        assert!(capabilities.experimental.is_none());
     }
 
     #[tokio::test]
