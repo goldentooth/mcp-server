@@ -27,6 +27,10 @@ pub enum AuthError {
     JwksKeyNotFound(String),
     #[error("Certificate error: {0}")]
     CertificateError(String),
+    #[error("Token introspection failed: {0}")]
+    TokenIntrospection(String),
+    #[error("Token is inactive or expired")]
+    TokenInactive,
 }
 
 pub type AuthResult<T> = Result<T, AuthError>;
@@ -112,6 +116,30 @@ pub struct JwkKey {
     #[serde(rename = "use")]
     pub key_use: Option<String>,
     pub alg: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct IntrospectionRequest {
+    token: String,
+    client_id: String,
+    client_secret: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct IntrospectionResponse {
+    active: bool,
+    scope: Option<String>,
+    client_id: Option<String>,
+    username: Option<String>,
+    token_type: Option<String>,
+    exp: Option<u64>,
+    iat: Option<u64>,
+    nbf: Option<u64>,
+    sub: Option<String>,
+    aud: Option<String>,
+    iss: Option<String>,
+    jti: Option<String>,
 }
 
 #[derive(Clone)]
@@ -351,11 +379,42 @@ impl AuthService {
     }
 
     pub async fn validate_token(&self, token: &str) -> AuthResult<Claims> {
+        println!(
+            "🔍 AUTH: Validating token format: {}...{}",
+            &token[..20.min(token.len())],
+            if token.len() > 40 {
+                &token[token.len() - 20..]
+            } else {
+                ""
+            }
+        );
+
+        // Determine token type: JWT has exactly 3 parts separated by dots
+        if self.is_jwt_token(token) {
+            println!("🔐 AUTH: Token appears to be JWT format - using JWT validation");
+            self.validate_jwt_token(token).await
+        } else {
+            println!("🔐 AUTH: Token appears to be opaque format - using token introspection");
+            self.introspect_access_token(token).await
+        }
+    }
+
+    pub fn is_jwt_token(&self, token: &str) -> bool {
+        // JWT tokens have exactly 3 non-empty parts separated by dots: header.payload.signature
+        let parts: Vec<&str> = token.split('.').collect();
+        parts.len() == 3 && parts.iter().all(|part| !part.is_empty())
+    }
+
+    async fn validate_jwt_token(&self, token: &str) -> AuthResult<Claims> {
+        println!("🔍 AUTH: Validating JWT token");
+
         // Decode the JWT header to get the key ID
         let header = decode_header(token)?;
         let kid = header
             .kid
             .ok_or_else(|| AuthError::InvalidConfig("JWT missing key ID".to_string()))?;
+
+        println!("🔑 AUTH: JWT key ID: {}", kid);
 
         // Get JWKS and find the matching key
         let jwks = self.get_jwks().await?;
@@ -364,6 +423,8 @@ impl AuthService {
             .iter()
             .find(|key| key.kid == kid)
             .ok_or_else(|| AuthError::JwksKeyNotFound(kid.clone()))?;
+
+        println!("✅ AUTH: Found matching JWKS key");
 
         // Convert JWK to decoding key
         let decoding_key = self.jwk_to_decoding_key(jwk)?;
@@ -375,9 +436,90 @@ impl AuthService {
         // Don't require audience for client_credentials tokens - they often don't have one
         validation.validate_aud = false;
 
+        println!("🔍 AUTH: Validating JWT with issuer: {}", discovery.issuer);
+
         // Decode and validate the token
         let token_data = decode::<Claims>(token, &decoding_key, &validation)?;
+
+        println!("✅ AUTH: JWT validation successful");
         Ok(token_data.claims)
+    }
+
+    pub async fn introspect_access_token(&self, token: &str) -> AuthResult<Claims> {
+        println!("🔍 AUTH: Starting OAuth 2.0 token introspection (RFC 7662)");
+
+        // Get discovery config to find introspection endpoint
+        let discovery = self.discover_oidc_config().await?;
+        let introspection_url = format!("{}/api/oidc/introspect", self.config.authelia_base_url);
+
+        println!(
+            "🌐 AUTH: Token introspection endpoint: {}",
+            introspection_url
+        );
+
+        // Prepare introspection request
+        let introspection_request = IntrospectionRequest {
+            token: token.to_string(),
+            client_id: self.config.client_id.clone(),
+            client_secret: self.config.client_secret.clone(),
+        };
+
+        println!("📤 AUTH: Sending token introspection request");
+
+        // Make introspection request
+        let response = self
+            .client
+            .post(&introspection_url)
+            .form(&introspection_request)
+            .send()
+            .await
+            .map_err(|e| AuthError::TokenIntrospection(format!("Request failed: {}", e)))?;
+
+        let status = response.status();
+        println!("📥 AUTH: Token introspection response status: {}", status);
+
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(AuthError::TokenIntrospection(format!(
+                "HTTP {}: {}",
+                status, error_text
+            )));
+        }
+
+        let introspection: IntrospectionResponse = response.json().await.map_err(|e| {
+            AuthError::TokenIntrospection(format!("Failed to parse response: {}", e))
+        })?;
+
+        println!(
+            "📋 AUTH: Token introspection result - active: {}",
+            introspection.active
+        );
+
+        if !introspection.active {
+            return Err(AuthError::TokenInactive);
+        }
+
+        // Convert introspection response to Claims
+        let claims = Claims {
+            sub: introspection.sub.unwrap_or_else(|| "unknown".to_string()),
+            exp: introspection.exp.unwrap_or(0) as usize,
+            iat: introspection.iat.unwrap_or(0) as usize,
+            iss: introspection
+                .iss
+                .unwrap_or_else(|| discovery.issuer.clone()),
+            aud: introspection
+                .aud
+                .unwrap_or_else(|| self.config.client_id.clone()),
+            email: None,  // Introspection doesn't typically include email
+            groups: None, // Would need to be added to Authelia introspection response
+            preferred_username: introspection.username,
+        };
+
+        println!(
+            "✅ AUTH: Token introspection successful - user: {:?}",
+            claims.preferred_username
+        );
+        Ok(claims)
     }
 
     fn jwk_to_decoding_key(&self, jwk: &JwkKey) -> AuthResult<DecodingKey> {
