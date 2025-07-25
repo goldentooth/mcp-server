@@ -15,6 +15,7 @@ use tokio::net::TcpListener;
 // OAuth well-known endpoint constants
 const OAUTH_WELL_KNOWN_PATH: &str = "/.well-known/oauth-authorization-server";
 const OIDC_WELL_KNOWN_PATH: &str = "/.well-known/openid-configuration";
+const OAUTH_PROTECTED_RESOURCE_PATH: &str = "/.well-known/oauth-protected-resource";
 
 pub struct HttpServer {
     service: GoldentoothService,
@@ -152,6 +153,20 @@ pub async fn handle_request(
             req.uri().path()
         );
         return handle_oauth_metadata(auth_service, req.method()).await;
+    }
+
+    // Handle OAuth Protected Resource Metadata endpoint
+    if req.uri().path() == OAUTH_PROTECTED_RESOURCE_PATH
+        && (req.method() == Method::GET
+            || req.method() == Method::HEAD
+            || req.method() == Method::POST)
+    {
+        println!(
+            "🔍 HTTP: Handling OAuth protected resource metadata request: {} {}",
+            req.method(),
+            req.uri().path()
+        );
+        return handle_oauth_protected_resource_metadata(req.method()).await;
     }
 
     // Handle authentication endpoints (public, no authentication required)
@@ -777,6 +792,33 @@ async fn handle_oauth_metadata(
     }
 }
 
+async fn handle_oauth_protected_resource_metadata(
+    method: &Method,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    // OAuth 2.0 Protected Resource Metadata (RFC 8693 and RFC 9200)
+    let metadata = serde_json::json!({
+        "resource": "https://mcp.services.goldentooth.net",
+        "authorization_servers": ["https://auth.services.goldentooth.net"],
+        "jwks_uri": "https://auth.services.goldentooth.net/jwks.json",
+        "bearer_methods_supported": ["header"],
+        "resource_documentation": "https://docs.goldentooth.net/mcp"
+    });
+
+    // HEAD requests should return empty body with same headers
+    let response_body = if method == Method::HEAD {
+        Full::new(Bytes::new())
+    } else {
+        Full::new(Bytes::from(metadata.to_string()))
+    };
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .header("Access-Control-Allow-Origin", "*")
+        .body(response_body)
+        .unwrap())
+}
+
 async fn handle_auth_request(
     req: Request<hyper::body::Incoming>,
     auth_service: Option<AuthService>,
@@ -1216,5 +1258,76 @@ mod tests {
             "/.well-known/oauth-authorization-server"
         );
         assert_eq!(OIDC_WELL_KNOWN_PATH, "/.well-known/openid-configuration");
+        assert_eq!(
+            OAUTH_PROTECTED_RESOURCE_PATH,
+            "/.well-known/oauth-protected-resource"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_oauth_protected_resource_metadata() {
+        // Test that protected resource metadata endpoint returns proper metadata
+        let result = handle_oauth_protected_resource_metadata(&Method::GET)
+            .await
+            .unwrap();
+        assert_eq!(result.status(), StatusCode::OK);
+
+        // Check headers
+        assert_eq!(
+            result.headers().get("Content-Type").unwrap(),
+            "application/json"
+        );
+        assert_eq!(
+            result.headers().get("Access-Control-Allow-Origin").unwrap(),
+            "*"
+        );
+
+        // Check body contains expected metadata
+        use http_body_util::BodyExt;
+        let body_bytes = result.into_body().collect().await.unwrap().to_bytes();
+        let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+
+        assert_eq!(metadata["resource"], "https://mcp.services.goldentooth.net");
+        assert_eq!(
+            metadata["authorization_servers"],
+            serde_json::json!(["https://auth.services.goldentooth.net"])
+        );
+        assert_eq!(
+            metadata["jwks_uri"],
+            "https://auth.services.goldentooth.net/jwks.json"
+        );
+        assert_eq!(
+            metadata["bearer_methods_supported"],
+            serde_json::json!(["header"])
+        );
+        assert_eq!(
+            metadata["resource_documentation"],
+            "https://docs.goldentooth.net/mcp"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_oauth_protected_resource_metadata_head_request() {
+        // Test HEAD request returns empty body with proper headers
+        let result = handle_oauth_protected_resource_metadata(&Method::HEAD)
+            .await
+            .unwrap();
+        assert_eq!(result.status(), StatusCode::OK);
+
+        // Check headers
+        assert_eq!(
+            result.headers().get("Content-Type").unwrap(),
+            "application/json"
+        );
+        assert_eq!(
+            result.headers().get("Access-Control-Allow-Origin").unwrap(),
+            "*"
+        );
+
+        // HEAD should have empty body
+        use http_body_util::BodyExt;
+        let body_bytes = result.into_body().collect().await.unwrap().to_bytes();
+        assert!(body_bytes.is_empty());
     }
 }
