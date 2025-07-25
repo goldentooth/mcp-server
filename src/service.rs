@@ -402,24 +402,46 @@ impl Service<RoleServer> for GoldentoothService {
     }
 
     fn get_info(&self) -> <RoleServer as ServiceRole>::Info {
-        InitializeResult {
+        println!("🏗️ SERVICE: get_info() called - building server capabilities");
+
+        let capabilities = ServerCapabilities {
+            tools: Some(ToolsCapability { list_changed: None }),
+            resources: None,
+            prompts: None,
+            logging: None,
+            completions: None,
+            experimental: None,
+        };
+
+        let server_info = Implementation {
+            name: "goldentooth-mcp".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        };
+
+        let instructions = Some("Goldentooth cluster management MCP server. Provides tools to interact with the Raspberry Pi cluster infrastructure.".to_string());
+
+        println!(
+            "🏗️ SERVICE: Capabilities - tools: {:?}",
+            capabilities.tools.is_some()
+        );
+        println!(
+            "🏗️ SERVICE: Server info - name: {}, version: {}",
+            server_info.name, server_info.version
+        );
+        println!(
+            "🏗️ SERVICE: Instructions: {:?}",
+            instructions.as_deref().unwrap_or("none")
+        );
+
+        let result = InitializeResult {
             protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ServerCapabilities {
-                tools: Some(ToolsCapability {
-                    list_changed: None,
-                }),
-                resources: None,
-                prompts: None,
-                logging: None,
-                completions: None,
-                experimental: None,
-            },
-            server_info: Implementation {
-                name: "goldentooth-mcp".to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-            },
-            instructions: Some("Goldentooth cluster management MCP server. Provides tools to interact with the Raspberry Pi cluster infrastructure.".to_string()),
-        }
+            capabilities,
+            server_info,
+            instructions,
+        };
+
+        println!("🏗️ SERVICE: get_info() returning complete result");
+        result
     }
 }
 
