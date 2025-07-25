@@ -128,8 +128,11 @@ pub async fn handle_request(
     }
 
     // Handle OAuth well-known endpoints (public, no authentication required)
+    // Support GET, HEAD, and POST methods (some clients may use POST for discovery)
     if (req.uri().path() == OAUTH_WELL_KNOWN_PATH || req.uri().path() == OIDC_WELL_KNOWN_PATH)
-        && (req.method() == Method::GET || req.method() == Method::HEAD)
+        && (req.method() == Method::GET
+            || req.method() == Method::HEAD
+            || req.method() == Method::POST)
     {
         return handle_oauth_metadata(auth_service, req.method()).await;
     }
