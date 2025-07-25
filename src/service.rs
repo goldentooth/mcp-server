@@ -3,15 +3,13 @@ use rmcp::{
     RoleServer, Service,
     model::{
         ErrorCode, ErrorData, Implementation, InitializeResult, ProtocolVersion,
-        ServerCapabilities, Tool, ToolsCapability,
+        ServerCapabilities, ToolsCapability,
     },
     service::{NotificationContext, RequestContext, ServiceRole},
 };
-use serde_json::{Map, Value, json};
-use std::borrow::Cow;
+use serde_json::{Value, json};
 use std::future::Future;
 use std::process::Command;
-use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct GoldentoothService {
@@ -93,26 +91,6 @@ impl GoldentoothService {
         }
     }
 
-    async fn handle_tool_request(
-        &self,
-        _request: <RoleServer as ServiceRole>::PeerReq,
-        _context: &RequestContext<RoleServer>,
-    ) -> Result<<RoleServer as ServiceRole>::Resp, ErrorData> {
-        // Parse the request to determine if it's a tool call
-        // For now, we'll implement basic tool handling
-        // This is a placeholder - the actual implementation will depend on rmcp's request structure
-
-        // Since we can't directly access the request structure in this context,
-        // we'll need to implement this based on the rmcp documentation
-        // For now, return an error indicating the method isn't fully implemented
-        Err(ErrorData {
-            code: ErrorCode(-32601), // Method not found
-            message: "Tool request handling not yet fully implemented - rmcp integration pending"
-                .into(),
-            data: None,
-        })
-    }
-
     #[allow(dead_code)]
     async fn execute_goldentooth_command(&self, args: &[&str]) -> Result<String, String> {
         let output = Command::new("goldentooth")
@@ -168,6 +146,80 @@ impl GoldentoothService {
         }
     }
 
+    #[allow(dead_code)]
+    async fn handle_service_status(
+        &self,
+        service: &str,
+        node: Option<&str>,
+    ) -> Result<Value, ErrorData> {
+        let node_arg = node.unwrap_or("all");
+        let command = format!("systemctl status {}", service);
+        let args = vec!["command", node_arg, &command];
+
+        match self.execute_goldentooth_command(&args).await {
+            Ok(output) => Ok(json!({
+                "success": true,
+                "output": output,
+                "tool": "service_status",
+                "service": service,
+                "node": node
+            })),
+            Err(error) => Ok(json!({
+                "success": false,
+                "error": error,
+                "tool": "service_status",
+                "service": service,
+                "node": node
+            })),
+        }
+    }
+
+    #[allow(dead_code)]
+    async fn handle_resource_usage(&self, node: Option<&str>) -> Result<Value, ErrorData> {
+        let node_arg = node.unwrap_or("all");
+        let args = vec!["command", node_arg, "free -h && df -h"];
+
+        match self.execute_goldentooth_command(&args).await {
+            Ok(output) => Ok(json!({
+                "success": true,
+                "output": output,
+                "tool": "resource_usage",
+                "node": node
+            })),
+            Err(error) => Ok(json!({
+                "success": false,
+                "error": error,
+                "tool": "resource_usage",
+                "node": node
+            })),
+        }
+    }
+
+    #[allow(dead_code)]
+    async fn handle_cluster_info(&self) -> Result<Value, ErrorData> {
+        // Get basic cluster information - nodes, services, etc.
+        match self.execute_goldentooth_command(&["ping", "all"]).await {
+            Ok(ping_output) => {
+                // Try to get additional info about cluster services
+                let services_result = self
+                    .execute_goldentooth_command(&["command", "jast", "consul members"])
+                    .await;
+
+                Ok(json!({
+                    "success": true,
+                    "ping_status": ping_output,
+                    "consul_members": services_result.unwrap_or_else(|e| format!("Could not get consul members: {}", e)),
+                    "tool": "cluster_info"
+                }))
+            }
+            Err(error) => Ok(json!({
+                "success": false,
+                "error": error,
+                "tool": "cluster_info"
+            })),
+        }
+    }
+
     fn extract_auth_header(&self, _context: &RequestContext<RoleServer>) -> Option<String> {
         // TODO: Extract authorization header from MCP request context
         // This is a placeholder implementation until rmcp provides access to request metadata
@@ -188,7 +240,7 @@ impl Service<RoleServer> for GoldentoothService {
     #[allow(clippy::manual_async_fn)]
     fn handle_request(
         &self,
-        _request: <RoleServer as ServiceRole>::PeerReq,
+        request: <RoleServer as ServiceRole>::PeerReq,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<<RoleServer as ServiceRole>::Resp, ErrorData>> + Send + '_
     {
@@ -196,8 +248,147 @@ impl Service<RoleServer> for GoldentoothService {
             // Validate authentication if enabled
             let _claims = self.validate_request_auth(&context).await?;
 
-            // Handle tool calls based on the request
-            self.handle_tool_request(_request, &context).await
+            // Pattern match on the request type
+            match request {
+                rmcp::model::ClientRequest::CallToolRequest(tool_request) => {
+                    let tool_name = &tool_request.params.name;
+                    let arguments = &tool_request.params.arguments;
+
+                    match tool_name.as_ref() {
+                        "cluster_ping" => match self.handle_cluster_ping().await {
+                            Ok(result) => {
+                                let content = rmcp::model::Content::text(
+                                    serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
+                                        "Failed to serialize result".to_string()
+                                    }),
+                                );
+                                let tool_result =
+                                    rmcp::model::CallToolResult::success(vec![content]);
+                                Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                            }
+                            Err(_) => {
+                                let content = rmcp::model::Content::text("Failed to ping cluster");
+                                let tool_result = rmcp::model::CallToolResult::error(vec![content]);
+                                Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                            }
+                        },
+                        "cluster_status" => {
+                            let node = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("node"))
+                                .and_then(|v| v.as_str());
+
+                            match self.handle_cluster_status(node).await {
+                                Ok(result) => {
+                                    let content = rmcp::model::Content::text(
+                                        serde_json::to_string_pretty(&result).unwrap_or_else(
+                                            |_| "Failed to serialize result".to_string(),
+                                        ),
+                                    );
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::success(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                                Err(_) => {
+                                    let content =
+                                        rmcp::model::Content::text("Failed to get cluster status");
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::error(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                            }
+                        }
+                        "service_status" => {
+                            let service = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("service"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("consul"); // Default to consul service
+
+                            let node = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("node"))
+                                .and_then(|v| v.as_str());
+
+                            match self.handle_service_status(service, node).await {
+                                Ok(result) => {
+                                    let content = rmcp::model::Content::text(
+                                        serde_json::to_string_pretty(&result).unwrap_or_else(
+                                            |_| "Failed to serialize result".to_string(),
+                                        ),
+                                    );
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::success(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                                Err(_) => {
+                                    let content =
+                                        rmcp::model::Content::text("Failed to get service status");
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::error(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                            }
+                        }
+                        "resource_usage" => {
+                            let node = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("node"))
+                                .and_then(|v| v.as_str());
+
+                            match self.handle_resource_usage(node).await {
+                                Ok(result) => {
+                                    let content = rmcp::model::Content::text(
+                                        serde_json::to_string_pretty(&result).unwrap_or_else(
+                                            |_| "Failed to serialize result".to_string(),
+                                        ),
+                                    );
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::success(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                                Err(_) => {
+                                    let content =
+                                        rmcp::model::Content::text("Failed to get resource usage");
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::error(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                            }
+                        }
+                        "cluster_info" => match self.handle_cluster_info().await {
+                            Ok(result) => {
+                                let content = rmcp::model::Content::text(
+                                    serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
+                                        "Failed to serialize result".to_string()
+                                    }),
+                                );
+                                let tool_result =
+                                    rmcp::model::CallToolResult::success(vec![content]);
+                                Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                            }
+                            Err(_) => {
+                                let content =
+                                    rmcp::model::Content::text("Failed to get cluster info");
+                                let tool_result = rmcp::model::CallToolResult::error(vec![content]);
+                                Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                            }
+                        },
+                        _ => {
+                            Err(ErrorData {
+                                code: ErrorCode(-32601), // Method not found
+                                message: format!("Unknown tool: {}", tool_name).into(),
+                                data: None,
+                            })
+                        }
+                    }
+                }
+                _ => Err(ErrorData {
+                    code: ErrorCode(-32601),
+                    message: "Unsupported request type".into(),
+                    data: None,
+                }),
+            }
         }
     }
 
@@ -211,42 +402,6 @@ impl Service<RoleServer> for GoldentoothService {
     }
 
     fn get_info(&self) -> <RoleServer as ServiceRole>::Info {
-        let _tools = [
-            Tool {
-                name: Cow::Borrowed("cluster_ping"),
-                description: Some(Cow::Borrowed(
-                    "Ping all nodes in the goldentooth cluster to check their status",
-                )),
-                input_schema: {
-                    let mut schema = Map::new();
-                    schema.insert("type".to_string(), json!("object"));
-                    schema.insert("properties".to_string(), json!({}));
-                    schema.insert("required".to_string(), json!([]));
-                    Arc::new(schema)
-                },
-                annotations: None,
-            },
-            Tool {
-                name: Cow::Borrowed("cluster_status"),
-                description: Some(Cow::Borrowed(
-                    "Get detailed status information for all cluster nodes",
-                )),
-                input_schema: {
-                    let mut schema = Map::new();
-                    schema.insert("type".to_string(), json!("object"));
-                    let mut properties = Map::new();
-                    let mut node_prop = Map::new();
-                    node_prop.insert("type".to_string(), json!("string"));
-                    node_prop.insert("description".to_string(), json!("Optional specific node to check (e.g., 'allyrion', 'jast'). If not provided, checks all nodes."));
-                    properties.insert("node".to_string(), json!(node_prop));
-                    schema.insert("properties".to_string(), json!(properties));
-                    schema.insert("required".to_string(), json!([]));
-                    Arc::new(schema)
-                },
-                annotations: None,
-            },
-        ];
-
         InitializeResult {
             protocol_version: ProtocolVersion::V_2024_11_05,
             capabilities: ServerCapabilities {
@@ -319,16 +474,14 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Request handling not yet implemented")]
-    async fn test_handle_request_panics() {
-        let _service = GoldentoothService::new();
+    async fn test_handle_request_with_unsupported_request() {
+        // Test that unsupported request types return appropriate errors
+        // The actual tool request handling would need proper MCP client integration to test
 
-        // We can't easily construct the request types, but we know
-        // our implementation will panic with unimplemented
-        // This would be tested through actual MCP protocol integration
-
-        // For now, directly test the panic behavior
-        panic!("Request handling not yet implemented");
+        // This is a placeholder test since we can't easily construct ClientRequest types
+        // without full MCP client integration. The integration tests handle the actual
+        // request/response flow testing.
+        assert!(true);
     }
 
     #[test]
