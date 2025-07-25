@@ -720,7 +720,7 @@ async fn handle_auth_request(
                     let response_data = serde_json::json!({
                         "access_token": access_token.secret(),
                         "token_type": "Bearer",
-                        "expires_in": 3600
+                        "expires_in": 2592000  // 30 days in seconds
                     });
                     Ok(Response::builder()
                         .status(StatusCode::OK)
@@ -795,7 +795,7 @@ async fn handle_auth_request(
                     let response_data = serde_json::json!({
                         "access_token": access_token.secret(),
                         "token_type": "Bearer",
-                        "expires_in": 3600
+                        "expires_in": 2592000  // 30 days in seconds
                     });
                     Ok(Response::builder()
                         .status(StatusCode::OK)
