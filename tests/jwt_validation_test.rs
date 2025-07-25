@@ -113,6 +113,12 @@ async fn test_real_jwt_validation_flow() {
 async fn test_jwt_validation_logic() {
     println!("🧪 Testing JWT validation logic with various token formats");
 
+    // Skip in CI environment - validate_token makes network calls for introspection
+    if std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok() {
+        println!("⚠️ Skipping validation logic test in CI environment (requires live Authelia)");
+        return;
+    }
+
     let auth_config = AuthConfig {
         authelia_base_url: "https://auth.services.goldentooth.net".to_string(),
         client_id: "goldentooth-mcp".to_string(),
@@ -240,6 +246,12 @@ async fn test_mcp_request_with_jwt_auth() {
 #[tokio::test]
 async fn test_jwt_timing_scenarios() {
     println!("🧪 Testing JWT timing and clock skew scenarios");
+
+    // Skip in CI environment - requires live Authelia connection
+    if std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok() {
+        println!("⚠️ Skipping timing test in CI environment (requires live Authelia)");
+        return;
+    }
 
     // We can't easily test this without real tokens, but we can test
     // the timing of our auth service operations
