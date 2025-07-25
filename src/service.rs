@@ -116,9 +116,13 @@ impl Service<RoleServer> for GoldentoothService {
             // Validate authentication if enabled
             let _claims = self.validate_request_auth(&context).await?;
 
-            // For now, just return a generic error for actual requests
-            // We'll implement proper request handling later
-            unimplemented!("Request handling not yet implemented")
+            // TODO: Implement proper request handling based on MCP protocol
+            // For now, return method not found error instead of panicking with unimplemented!()
+            Err(ErrorData {
+                code: ErrorCode(-32601), // Method not found
+                message: "Method not implemented".into(),
+                data: None,
+            })
         }
     }
 
@@ -133,7 +137,7 @@ impl Service<RoleServer> for GoldentoothService {
 
     fn get_info(&self) -> <RoleServer as ServiceRole>::Info {
         InitializeResult {
-            protocol_version: ProtocolVersion::default(),
+            protocol_version: ProtocolVersion::V_2024_11_05,
             capabilities: ServerCapabilities::default(),
             server_info: Implementation {
                 name: "goldentooth-mcp".to_string(),
@@ -163,7 +167,7 @@ mod tests {
         assert_eq!(info.server_info.name, "goldentooth-mcp");
         // Version should match Cargo.toml - don't hardcode it
         assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
-        assert_eq!(info.protocol_version, ProtocolVersion::default());
+        assert_eq!(info.protocol_version, ProtocolVersion::V_2024_11_05);
         assert!(info.instructions.is_none());
     }
 
