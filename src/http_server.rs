@@ -128,6 +128,126 @@ async fn handle_request(
         return handle_auth_request(req, auth_service).await;
     }
 
+    // Handle OAuth callback endpoint
+    if req.method() == Method::GET && req.uri().path() == "/callback" {
+        // Extract query parameters
+        let query = req.uri().query().unwrap_or("");
+        let mut params = std::collections::HashMap::new();
+
+        // Proper query string parsing with URL decoding
+        for pair in query.split('&') {
+            if let Some((key, value)) = pair.split_once('=') {
+                let decoded_key = urlencoding::decode(key).unwrap_or_else(|_| key.into());
+                let decoded_value = urlencoding::decode(value).unwrap_or_else(|_| value.into());
+                params.insert(decoded_key.to_string(), decoded_value.to_string());
+            }
+        }
+
+        if let Some(code) = params.get("code") {
+            // Display the authorization code for the user to copy (HTML-escaped for security)
+            let escaped_code = html_escape(code);
+            let html = format!(
+                r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>MCP Authorization</title>
+    <style>
+        body {{ font-family: sans-serif; margin: 40px; }}
+        .code-container {{
+            background: #f0f0f0;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }}
+        code {{
+            font-size: 14px;
+            word-break: break-all;
+            display: block;
+            padding: 10px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }}
+        .instructions {{ margin-top: 20px; }}
+    </style>
+</head>
+<body>
+    <h1>Authorization Successful</h1>
+    <p>Copy the authorization code below:</p>
+    <div class="code-container">
+        <code id="auth-code">{}</code>
+    </div>
+    <div class="instructions">
+        <p>Paste this code back into the goldentooth mcp_auth command when prompted.</p>
+    </div>
+    <script>
+        // Auto-select the code for easy copying
+        window.onload = function() {{
+            const codeElement = document.getElementById('auth-code');
+            const range = document.createRange();
+            range.selectNode(codeElement);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+        }};
+    </script>
+</body>
+</html>"#,
+                escaped_code
+            );
+
+            return Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "text/html; charset=utf-8")
+                .body(Full::new(Bytes::from(html)))
+                .unwrap());
+        } else if let Some(error) = params.get("error") {
+            // Handle OAuth error (HTML-escaped for security)
+            let error_desc = params.get("error_description").unwrap_or(error);
+            let escaped_error = html_escape(error);
+            let escaped_error_desc = html_escape(error_desc);
+            let html = format!(
+                r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Authorization Error</title>
+    <style>
+        body {{ font-family: sans-serif; margin: 40px; }}
+        .error {{
+            background: #fee;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #fcc;
+        }}
+    </style>
+</head>
+<body>
+    <h1>Authorization Failed</h1>
+    <div class="error">
+        <p><strong>Error:</strong> {}</p>
+        <p>{}</p>
+    </div>
+    <p><a href="/">Try again</a></p>
+</body>
+</html>"#,
+                escaped_error, escaped_error_desc
+            );
+
+            return Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "text/html; charset=utf-8")
+                .body(Full::new(Bytes::from(html)))
+                .unwrap());
+        } else {
+            // No code or error parameter
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header("Content-Type", "text/plain")
+                .body(Full::new(Bytes::from(
+                    "Missing authorization code or error parameter",
+                )))
+                .unwrap());
+        }
+    }
     // Only allow POST requests for MCP endpoints
     if req.method() != Method::POST {
         return Ok(Response::builder()
@@ -298,6 +418,15 @@ fn create_json_error_response(status: StatusCode, error_message: &str) -> Respon
             serde_json::json!({"error": error_message}).to_string(),
         )))
         .unwrap()
+}
+
+fn html_escape(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
 }
 
 async fn parse_json_body(
@@ -625,6 +754,20 @@ mod tests {
                 .get("Access-Control-Allow-Origin")
                 .unwrap(),
             "*"
+        );
+    }
+
+    #[test]
+    fn test_html_escape() {
+        // Test HTML escaping function
+        assert_eq!(html_escape("normal text"), "normal text");
+        assert_eq!(html_escape("<script>"), "&lt;script&gt;");
+        assert_eq!(html_escape("A & B"), "A &amp; B");
+        assert_eq!(html_escape("\"quoted\""), "&quot;quoted&quot;");
+        assert_eq!(html_escape("'single'"), "&#x27;single&#x27;");
+        assert_eq!(
+            html_escape("<script>alert('XSS')</script>"),
+            "&lt;script&gt;alert(&#x27;XSS&#x27;)&lt;/script&gt;"
         );
     }
 }
