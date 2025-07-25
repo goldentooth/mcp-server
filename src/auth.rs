@@ -289,8 +289,10 @@ impl AuthService {
         .set_redirect_uri(
             RedirectUrl::new(self.config.redirect_uri.clone())
                 .map_err(|e| AuthError::InvalidConfig(format!("Invalid redirect URI: {}", e)))?,
-        );
+        )
+        .set_auth_type(oauth2::AuthType::RequestBody); // Use client_secret_post instead of client_secret_basic
 
+        println!("🔧 AUTH: Configured OAuth client with client_secret_post authentication method");
         self.oauth_client = Some(oauth_client);
         Ok(())
     }
