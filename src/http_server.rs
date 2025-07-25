@@ -282,6 +282,7 @@ pub async fn handle_request(
 
     // Handle MCP JSON-RPC requests (only for /mcp/request path)
     if req.method() == Method::POST && req.uri().path() == "/mcp/request" {
+        println!("🎯 MCP: Received MCP request to {}", req.uri().path());
         // Continue with MCP request handling
     } else {
         // Return 404 for all other unhandled paths
@@ -308,15 +309,35 @@ pub async fn handle_request(
         }
     }
 
+    println!(
+        "🔐 AUTH: Extracted headers: {:?}",
+        headers.keys().collect::<Vec<_>>()
+    );
+
     // Check authentication if enabled
     if let Some(ref auth) = auth_service {
+        println!("🔒 AUTH: Authentication service enabled, checking headers...");
         if let Some(auth_header) = headers.get("authorization") {
+            println!(
+                "🔑 AUTH: Found authorization header: {}...",
+                if auth_header.len() > 20 {
+                    &auth_header[..20]
+                } else {
+                    auth_header
+                }
+            );
             if let Some(token) = auth_header.strip_prefix("Bearer ") {
+                println!("🎫 AUTH: Extracted Bearer token (length: {})", token.len());
                 match auth.validate_token(token).await {
-                    Ok(_claims) => {
+                    Ok(claims) => {
+                        println!(
+                            "✅ AUTH: Token validation successful for user: {}",
+                            claims.sub
+                        );
                         // Authentication successful, continue
                     }
                     Err(e) => {
+                        println!("❌ AUTH: Token validation failed: {}", e);
                         eprintln!("Authentication failed: {}", e);
                         return Ok(Response::builder()
                             .status(StatusCode::UNAUTHORIZED)
@@ -329,6 +350,7 @@ pub async fn handle_request(
                     }
                 }
             } else {
+                println!("❌ AUTH: Authorization header missing 'Bearer ' prefix");
                 return Ok(Response::builder()
                     .status(StatusCode::UNAUTHORIZED)
                     .header("Access-Control-Allow-Origin", "*")
@@ -338,6 +360,7 @@ pub async fn handle_request(
                     .unwrap());
             }
         } else {
+            println!("❌ AUTH: No authorization header found in request");
             return Ok(Response::builder()
                 .status(StatusCode::UNAUTHORIZED)
                 .header("Access-Control-Allow-Origin", "*")
@@ -346,12 +369,15 @@ pub async fn handle_request(
                 )))
                 .unwrap());
         }
+    } else {
+        println!("🔓 AUTH: No authentication service configured, proceeding without auth");
     }
 
     // Read request body
     let body = match req.collect().await {
         Ok(body) => body.to_bytes(),
-        Err(_) => {
+        Err(e) => {
+            println!("❌ HTTP: Failed to read request body: {}", e);
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Access-Control-Allow-Origin", "*")
@@ -362,10 +388,38 @@ pub async fn handle_request(
         }
     };
 
+    let body_str = String::from_utf8_lossy(&body);
+    println!(
+        "📨 MCP: Request body (length: {}): {}",
+        body.len(),
+        if body_str.len() > 200 {
+            format!("{}...", &body_str[..200])
+        } else {
+            body_str.to_string()
+        }
+    );
+
     // Parse JSON-RPC request
-    let json_rpc: Value = match serde_json::from_slice(&body) {
-        Ok(json) => json,
-        Err(_) => {
+    let json_rpc: Value = match serde_json::from_slice::<Value>(&body) {
+        Ok(json) => {
+            println!("✅ JSON: Successfully parsed JSON-RPC request");
+            if let Some(method) = json.get("method").and_then(|m| m.as_str()) {
+                println!("🔧 MCP: Method: {}", method);
+                if method == "initialize" {
+                    println!("🚀 MCP: INITIALIZE REQUEST DETECTED!");
+                    if let Some(params) = json.get("params") {
+                        println!(
+                            "📋 MCP: Initialize params: {}",
+                            serde_json::to_string_pretty(params)
+                                .unwrap_or_else(|_| "failed to serialize".to_string())
+                        );
+                    }
+                }
+            }
+            json
+        }
+        Err(e) => {
+            println!("❌ JSON: Invalid JSON in request body: {}", e);
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Access-Control-Allow-Origin", "*")
@@ -377,7 +431,16 @@ pub async fn handle_request(
     };
 
     // Handle the JSON-RPC request
+    println!("📤 MCP: Forwarding request to handle_json_rpc...");
     let response = handle_json_rpc(json_rpc, service).await;
+    println!(
+        "📥 MCP: Response from handle_json_rpc: {}",
+        if response.len() > 300 {
+            format!("{}... (truncated)", &response[..300])
+        } else {
+            response.clone()
+        }
+    );
 
     Ok(Response::builder()
         .status(StatusCode::OK)
@@ -388,10 +451,20 @@ pub async fn handle_request(
 }
 
 async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String {
+    println!(
+        "🔍 JSON-RPC: Processing request: {}",
+        serde_json::to_string_pretty(&request)
+            .unwrap_or_else(|_| "failed to serialize".to_string())
+    );
+
     // Extract method from JSON-RPC request
     let method = match request.get("method").and_then(|m| m.as_str()) {
-        Some(method) => method,
+        Some(method) => {
+            println!("📍 JSON-RPC: Method extracted: {}", method);
+            method
+        }
         None => {
+            println!("❌ JSON-RPC: No method found in request");
             return serde_json::json!({
                 "jsonrpc": "2.0",
                 "error": {
@@ -405,10 +478,31 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
     };
 
     let id = request.get("id");
+    println!("🆔 JSON-RPC: Request ID: {:?}", id);
 
     match method {
         "initialize" => {
+            println!("🚀 JSON-RPC: Processing INITIALIZE method");
             let info = service.get_info();
+            println!("📊 CAPABILITIES: Getting server info...");
+            println!("📊 CAPABILITIES: Server name: {}", info.server_info.name);
+            println!(
+                "📊 CAPABILITIES: Server version: {}",
+                info.server_info.version
+            );
+            println!(
+                "📊 CAPABILITIES: Protocol version: {:?}",
+                info.protocol_version
+            );
+            println!(
+                "📊 CAPABILITIES: Has tools capability: {}",
+                info.capabilities.tools.is_some()
+            );
+            if let Some(ref tools_cap) = info.capabilities.tools {
+                println!("📊 CAPABILITIES: Tools capability details: {:?}", tools_cap);
+            }
+            println!("📊 CAPABILITIES: Instructions: {:?}", info.instructions);
+
             // Extract the version string from ProtocolVersion("2024-11-05") format
             let version_str = format!("{:?}", info.protocol_version);
             let protocol_version = version_str
@@ -416,7 +510,7 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
                 .and_then(|s| s.strip_suffix("\")"))
                 .unwrap_or("2024-11-05"); // fallback to current spec version
 
-            serde_json::json!({
+            let response = serde_json::json!({
                 "jsonrpc": "2.0",
                 "result": {
                     "protocolVersion": protocol_version,
@@ -427,8 +521,14 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
                     }
                 },
                 "id": id
-            })
-            .to_string()
+            });
+
+            println!(
+                "✅ INITIALIZE: Generated response: {}",
+                serde_json::to_string_pretty(&response)
+                    .unwrap_or_else(|_| "failed to serialize".to_string())
+            );
+            response.to_string()
         }
         "server/get_info" => {
             let info = service.get_info();
