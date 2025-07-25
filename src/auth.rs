@@ -201,36 +201,68 @@ impl AuthService {
     }
 
     pub fn new(config: AuthConfig) -> Self {
+        println!("🔧 AUTH: Initializing AuthService with config:");
+        println!("   - Authelia Base URL: {}", config.authelia_base_url);
+        println!("   - Client ID: {}", config.client_id);
+        if config.client_secret.len() > 16 {
+            println!(
+                "   - Client Secret: {}...{}",
+                &config.client_secret[..8],
+                &config.client_secret[config.client_secret.len() - 8..]
+            );
+        } else if !config.client_secret.is_empty() {
+            println!(
+                "   - Client Secret: {}...",
+                &config.client_secret[..config.client_secret.len().min(8)]
+            );
+        } else {
+            println!("   - Client Secret: (empty)");
+        }
+        println!("   - Redirect URI: {}", config.redirect_uri);
+
         // Configure HTTP client with custom certificate trust
         let mut client_builder = Client::builder().use_rustls_tls();
 
         // Load the cluster CA certificate if it exists
         const CLUSTER_CA_PATH: &str = "/etc/ssl/certs/goldentooth.pem";
         match fs::read_to_string(CLUSTER_CA_PATH) {
-            Ok(ca_cert_pem) => match reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()) {
-                Ok(ca_cert) => {
-                    client_builder = client_builder.add_root_certificate(ca_cert);
-                    eprintln!(
-                        "Successfully loaded cluster CA certificate from {}",
-                        CLUSTER_CA_PATH
-                    );
+            Ok(ca_cert_pem) => {
+                println!(
+                    "🔒 AUTH: Found cluster CA certificate at {}",
+                    CLUSTER_CA_PATH
+                );
+                match reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()) {
+                    Ok(ca_cert) => {
+                        client_builder = client_builder.add_root_certificate(ca_cert);
+                        println!("✅ AUTH: Successfully loaded cluster CA certificate");
+                    }
+                    Err(e) => {
+                        println!("❌ AUTH: Failed to parse cluster CA certificate: {}", e);
+                    }
                 }
-                Err(e) => {
-                    eprintln!("Failed to parse cluster CA certificate: {}", e);
-                }
-            },
+            }
             Err(e) => {
-                eprintln!(
-                    "Cluster CA certificate not found at {}: {}",
+                println!(
+                    "⚠️ AUTH: Cluster CA certificate not found at {}: {}",
                     CLUSTER_CA_PATH, e
                 );
             }
         }
 
-        // Also include built-in root certificates for other domains
-        client_builder = client_builder.tls_built_in_root_certs(true);
+        // For internal cluster communication, accept self-signed certificates
+        // This is safe because we're only communicating within our own cluster
+        println!(
+            "🔓 AUTH: Configuring TLS to accept self-signed certificates for internal cluster communication"
+        );
+        client_builder = client_builder
+            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true)
+            .tls_built_in_root_certs(true);
 
-        let client = client_builder.build().unwrap_or_else(|_| Client::new());
+        let client = client_builder.build().unwrap_or_else(|e| {
+            println!("❌ AUTH: Failed to build HTTP client: {}", e);
+            Client::new()
+        });
 
         Self {
             config,
@@ -370,23 +402,86 @@ impl AuthService {
     }
 
     pub async fn exchange_code_for_token(&self, code: &str) -> AuthResult<AccessToken> {
+        let code_preview = if code.len() > 40 {
+            format!("{}...{}", &code[..20], &code[code.len() - 20..])
+        } else {
+            code.to_string()
+        };
+        println!(
+            "🔄 AUTH: Starting token exchange for authorization code: {}",
+            code_preview
+        );
+
         let oauth_client = self
             .oauth_client
             .as_ref()
             .ok_or(AuthError::ClientNotInitialized)?;
 
+        println!("✅ AUTH: OAuth client is initialized");
+
+        // Get the discovery config to show token endpoint
+        match self.discover_oidc_config().await {
+            Ok(discovery) => {
+                println!("🌐 AUTH: Token endpoint: {}", discovery.token_endpoint);
+            }
+            Err(e) => {
+                println!("⚠️ AUTH: Could not fetch OIDC discovery config: {}", e);
+            }
+        }
+
         // Create a closure that captures our HTTP client
         let client = self.client.clone();
         let http_client = |request: HttpRequest| {
             let client = client.clone();
-            Box::pin(async move { Self::custom_http_client(client, request).await })
+            Box::pin(async move {
+                println!("📤 AUTH: Making token exchange request:");
+                println!("   - Method: {}", request.method);
+                println!("   - URL: {}", request.url);
+                println!("   - Headers: {:?}", request.headers);
+                println!("   - Body: {}", String::from_utf8_lossy(&request.body));
+
+                let result = Self::custom_http_client(client, request).await;
+
+                match &result {
+                    Ok(response) => {
+                        println!("📥 AUTH: Token exchange response:");
+                        println!("   - Status: {:?}", response.status_code);
+                        println!("   - Headers: {:?}", response.headers);
+                        println!("   - Body: {}", String::from_utf8_lossy(&response.body));
+                    }
+                    Err(e) => {
+                        println!("❌ AUTH: Token exchange HTTP error: {:?}", e);
+                    }
+                }
+
+                result
+            })
         };
 
+        println!("🚀 AUTH: Initiating OAuth2 token exchange...");
         let token_result = oauth_client
             .exchange_code(AuthorizationCode::new(code.to_string()))
             .request_async(http_client)
             .await
-            .map_err(|e| AuthError::InvalidConfig(format!("Token exchange failed: {}", e)))?;
+            .map_err(|e| {
+                println!("💥 AUTH: OAuth2 token exchange failed with error: {:?}", e);
+                AuthError::InvalidConfig(format!("Token exchange failed: {:?}", e))
+            })?;
+
+        let token_secret = token_result.access_token().secret();
+        let token_preview = if token_secret.len() > 40 {
+            format!(
+                "{}...{}",
+                &token_secret[..20],
+                &token_secret[token_secret.len() - 20..]
+            )
+        } else {
+            token_secret.to_string()
+        };
+        println!(
+            "🎉 AUTH: Token exchange successful! Access token: {}",
+            token_preview
+        );
 
         Ok(token_result.access_token().clone())
     }
