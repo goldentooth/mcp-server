@@ -128,6 +128,133 @@ async fn handle_request(
         return handle_auth_request(req, auth_service).await;
     }
 
+    // Handle OAuth callback endpoint
+    if req.method() == Method::GET && req.uri().path() == "/callback" {
+        // Extract query parameters
+        let query = req.uri().query().unwrap_or("");
+        let mut params = std::collections::HashMap::new();
+
+        // Simple query string parsing
+        for pair in query.split('&') {
+            if let Some((key, value)) = pair.split_once('=') {
+                params.insert(
+                    key.to_string(),
+                    value
+                        .replace('+', " ")
+                        .replace("%20", " ")
+                        .replace("%2C", ",")
+                        .replace("%2F", "/")
+                        .replace("%3A", ":")
+                        .replace("%3F", "?")
+                        .replace("%3D", "=")
+                        .replace("%26", "&"),
+                );
+            }
+        }
+
+        if let Some(code) = params.get("code") {
+            // Display the authorization code for the user to copy
+            let html = format!(
+                r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>MCP Authorization</title>
+    <style>
+        body {{ font-family: sans-serif; margin: 40px; }}
+        .code-container {{
+            background: #f0f0f0;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }}
+        code {{
+            font-size: 14px;
+            word-break: break-all;
+            display: block;
+            padding: 10px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }}
+        .instructions {{ margin-top: 20px; }}
+    </style>
+</head>
+<body>
+    <h1>Authorization Successful</h1>
+    <p>Copy the authorization code below:</p>
+    <div class="code-container">
+        <code id="auth-code">{}</code>
+    </div>
+    <div class="instructions">
+        <p>Paste this code back into the goldentooth mcp_auth command when prompted.</p>
+    </div>
+    <script>
+        // Auto-select the code for easy copying
+        window.onload = function() {{
+            const codeElement = document.getElementById('auth-code');
+            const range = document.createRange();
+            range.selectNode(codeElement);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+        }};
+    </script>
+</body>
+</html>"#,
+                code
+            );
+
+            return Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "text/html; charset=utf-8")
+                .body(Full::new(Bytes::from(html)))
+                .unwrap());
+        } else if let Some(error) = params.get("error") {
+            // Handle OAuth error
+            let error_desc = params.get("error_description").unwrap_or(error);
+            let html = format!(
+                r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Authorization Error</title>
+    <style>
+        body {{ font-family: sans-serif; margin: 40px; }}
+        .error {{
+            background: #fee;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #fcc;
+        }}
+    </style>
+</head>
+<body>
+    <h1>Authorization Failed</h1>
+    <div class="error">
+        <p><strong>Error:</strong> {}</p>
+        <p>{}</p>
+    </div>
+    <p><a href="/">Try again</a></p>
+</body>
+</html>"#,
+                error, error_desc
+            );
+
+            return Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "text/html; charset=utf-8")
+                .body(Full::new(Bytes::from(html)))
+                .unwrap());
+        } else {
+            // No code or error parameter
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header("Content-Type", "text/plain")
+                .body(Full::new(Bytes::from(
+                    "Missing authorization code or error parameter",
+                )))
+                .unwrap());
+        }
+    }
+
     // Only allow POST requests for MCP endpoints
     if req.method() != Method::POST {
         return Ok(Response::builder()
