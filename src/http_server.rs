@@ -324,26 +324,26 @@ pub async fn handle_request(
         }
     };
 
-    // Parse JSON to check if this is an initialize request
-    let is_initialize_request = if let Ok(json) = serde_json::from_slice::<Value>(&body) {
+    // Parse JSON to check if this is an initialize or tools/list request
+    let skip_auth = if let Ok(json) = serde_json::from_slice::<Value>(&body) {
         json.get("method")
             .and_then(|m| m.as_str())
-            .map(|method| method == "initialize")
+            .map(|method| method == "initialize" || method == "tools/list")
             .unwrap_or(false)
     } else {
         false
     };
 
-    println!("🔍 MCP: Is initialize request: {}", is_initialize_request);
+    println!("🔍 MCP: Skip auth for request: {}", skip_auth);
 
     println!(
         "🔐 AUTH: Extracted headers: {:?}",
         headers.keys().collect::<Vec<_>>()
     );
 
-    // Check authentication if enabled, but skip for initialize requests
+    // Check authentication if enabled, but skip for certain requests
     if let Some(ref auth) = auth_service {
-        if !is_initialize_request {
+        if !skip_auth {
             println!("🔒 AUTH: Authentication service enabled, checking headers...");
             if let Some(auth_header) = headers.get("authorization") {
                 println!(
@@ -398,7 +398,7 @@ pub async fn handle_request(
                     .unwrap());
             }
         } else {
-            println!("🚀 AUTH: Skipping authentication for initialize request");
+            println!("🚀 AUTH: Skipping authentication for unauthenticated method");
         }
     } else {
         println!("🔓 AUTH: No authentication service configured, proceeding without auth");
@@ -561,14 +561,82 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
             })
             .to_string()
         }
-        "tools/list" => serde_json::json!({
-            "jsonrpc": "2.0",
-            "result": {
-                "tools": []
-            },
-            "id": id
-        })
-        .to_string(),
+        "tools/list" => {
+            println!("🔧 TOOLS: Processing tools/list request");
+            let tools = vec![
+                serde_json::json!({
+                    "name": "cluster_ping",
+                    "description": "Ping all nodes in the goldentooth cluster to check their status",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }),
+                serde_json::json!({
+                    "name": "cluster_status",
+                    "description": "Get detailed status information for cluster nodes",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "node": {
+                                "type": "string",
+                                "description": "Specific node to check (e.g., 'allyrion', 'jast'). If not provided, checks all nodes."
+                            }
+                        }
+                    }
+                }),
+                serde_json::json!({
+                    "name": "service_status",
+                    "description": "Check the status of systemd services on cluster nodes",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "service": {
+                                "type": "string",
+                                "description": "Service name to check (e.g., 'consul', 'nomad', 'vault')"
+                            },
+                            "node": {
+                                "type": "string",
+                                "description": "Specific node to check. If not provided, checks all nodes."
+                            }
+                        },
+                        "required": ["service"]
+                    }
+                }),
+                serde_json::json!({
+                    "name": "resource_usage",
+                    "description": "Get memory and disk usage information for cluster nodes",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "node": {
+                                "type": "string",
+                                "description": "Specific node to check. If not provided, checks all nodes."
+                            }
+                        }
+                    }
+                }),
+                serde_json::json!({
+                    "name": "cluster_info",
+                    "description": "Get comprehensive cluster information including node status and service membership",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }),
+            ];
+
+            let response = serde_json::json!({
+                "jsonrpc": "2.0",
+                "result": {
+                    "tools": tools
+                },
+                "id": id
+            });
+
+            println!("✅ TOOLS: Returning {} tools", tools.len());
+            response.to_string()
+        }
         _ => serde_json::json!({
             "jsonrpc": "2.0",
             "error": {
@@ -1001,7 +1069,14 @@ mod tests {
         let json: Value = serde_json::from_str(&response).unwrap();
         assert_eq!(json["jsonrpc"], "2.0");
         assert_eq!(json["id"], 3);
-        assert_eq!(json["result"]["tools"], serde_json::json!([]));
+        // Should return 5 tools
+        assert_eq!(json["result"]["tools"].as_array().unwrap().len(), 5);
+
+        // Check first tool as example
+        let first_tool = &json["result"]["tools"][0];
+        assert_eq!(first_tool["name"], "cluster_ping");
+        assert!(first_tool["description"].is_string());
+        assert!(first_tool["inputSchema"].is_object());
     }
 
     #[tokio::test]
