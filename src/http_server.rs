@@ -12,6 +12,10 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
+// OAuth well-known endpoint constants
+const OAUTH_WELL_KNOWN_PATH: &str = "/.well-known/oauth-authorization-server";
+const OIDC_WELL_KNOWN_PATH: &str = "/.well-known/openid-configuration";
+
 pub struct HttpServer {
     service: GoldentoothService,
     auth_service: Option<AuthService>,
@@ -124,11 +128,10 @@ pub async fn handle_request(
     }
 
     // Handle OAuth well-known endpoints (public, no authentication required)
-    if (req.uri().path() == "/.well-known/oauth-authorization-server"
-        || req.uri().path() == "/.well-known/openid-configuration")
+    if (req.uri().path() == OAUTH_WELL_KNOWN_PATH || req.uri().path() == OIDC_WELL_KNOWN_PATH)
         && (req.method() == Method::GET || req.method() == Method::HEAD)
     {
-        return handle_oauth_metadata(auth_service).await;
+        return handle_oauth_metadata(auth_service, req.method()).await;
     }
 
     // Handle authentication endpoints (public, no authentication required)
@@ -468,17 +471,24 @@ async fn parse_json_body(
 
 async fn handle_oauth_metadata(
     auth_service: Option<AuthService>,
+    method: &Method,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let auth = match auth_service {
         Some(auth) => auth,
         None => {
+            let response_body = if method == Method::HEAD {
+                Full::new(Bytes::new())
+            } else {
+                Full::new(Bytes::from(
+                    serde_json::json!({"error": "OAuth not configured"}).to_string(),
+                ))
+            };
+
             return Ok(Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .header("Content-Type", "application/json")
                 .header("Access-Control-Allow-Origin", "*")
-                .body(Full::new(Bytes::from(
-                    serde_json::json!({"error": "OAuth not configured"}).to_string(),
-                )))
+                .body(response_body)
                 .unwrap());
         }
     };
@@ -500,22 +510,42 @@ async fn handle_oauth_metadata(
                 "service_documentation": "https://docs.goldentooth.net/mcp",
             });
 
+            // HEAD requests should return empty body with same headers
+            let response_body = if method == Method::HEAD {
+                Full::new(Bytes::new())
+            } else {
+                Full::new(Bytes::from(metadata.to_string()))
+            };
+
             Ok(Response::builder()
                 .status(StatusCode::OK)
                 .header("Content-Type", "application/json")
                 .header("Access-Control-Allow-Origin", "*")
-                .body(Full::new(Bytes::from(metadata.to_string())))
+                .body(response_body)
                 .unwrap())
         }
-        Err(e) => Ok(Response::builder()
-            .status(StatusCode::INTERNAL_SERVER_ERROR)
-            .header("Content-Type", "application/json")
-            .header("Access-Control-Allow-Origin", "*")
-            .body(Full::new(Bytes::from(format!(
-                r#"{{"error":"Failed to fetch OAuth metadata: {}"}}"#,
-                e
-            ))))
-            .unwrap()),
+        Err(e) => {
+            use crate::auth::AuthError;
+            let error_message = match e {
+                AuthError::DiscoveryFailed(_) => {
+                    r#"{"error":"OAuth discovery service unavailable"}"#
+                }
+                _ => r#"{"error":"OAuth metadata temporarily unavailable"}"#,
+            };
+
+            let response_body = if method == Method::HEAD {
+                Full::new(Bytes::new())
+            } else {
+                Full::new(Bytes::from(error_message))
+            };
+
+            Ok(Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header("Content-Type", "application/json")
+                .header("Access-Control-Allow-Origin", "*")
+                .body(response_body)
+                .unwrap())
+        }
     }
 }
 
@@ -905,5 +935,51 @@ mod tests {
             html_escape("<script>alert('XSS')</script>"),
             "&lt;script&gt;alert(&#x27;XSS&#x27;)&lt;/script&gt;"
         );
+    }
+
+    #[tokio::test]
+    async fn test_oauth_metadata_no_auth_service() {
+        // Test that metadata endpoint returns 404 when auth not configured
+        let result = handle_oauth_metadata(None, &Method::GET).await.unwrap();
+        assert_eq!(result.status(), StatusCode::NOT_FOUND);
+
+        // Check headers
+        assert_eq!(
+            result.headers().get("Content-Type").unwrap(),
+            "application/json"
+        );
+        assert_eq!(
+            result.headers().get("Access-Control-Allow-Origin").unwrap(),
+            "*"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_oauth_metadata_head_request() {
+        // Test HEAD request returns empty body with proper headers (when no auth service)
+        let result = handle_oauth_metadata(None, &Method::HEAD).await.unwrap();
+        assert_eq!(result.status(), StatusCode::NOT_FOUND);
+
+        // For GET request, we get a body with error message
+        let get_result = handle_oauth_metadata(None, &Method::GET).await.unwrap();
+        assert_eq!(get_result.status(), StatusCode::NOT_FOUND);
+
+        use http_body_util::BodyExt;
+        let get_body_bytes = get_result.into_body().collect().await.unwrap().to_bytes();
+        assert!(!get_body_bytes.is_empty()); // GET should have error message
+
+        // HEAD should have empty body when no auth configured (error case)
+        let head_body_bytes = result.into_body().collect().await.unwrap().to_bytes();
+        assert!(head_body_bytes.is_empty());
+    }
+
+    #[test]
+    fn test_oauth_well_known_constants() {
+        // Verify the constants are set correctly
+        assert_eq!(
+            OAUTH_WELL_KNOWN_PATH,
+            "/.well-known/oauth-authorization-server"
+        );
+        assert_eq!(OIDC_WELL_KNOWN_PATH, "/.well-known/openid-configuration");
     }
 }
