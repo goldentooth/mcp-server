@@ -34,6 +34,7 @@ urlencoding = "2.1"
 tokio-test = "0.4"
 assert_matches = "1.5"
 futures = "0.3"
+url = "2.4"
 
 [[example]]
 name = "test_auth"
