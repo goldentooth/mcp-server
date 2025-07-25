@@ -101,6 +101,18 @@ pub async fn handle_request(
     service: GoldentoothService,
     auth_service: Option<AuthService>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
+    // Log all incoming requests for debugging
+    println!(
+        "🌐 HTTP: {} {} - Headers: {:?}",
+        req.method(),
+        req.uri(),
+        req.headers()
+            .iter()
+            .map(|(k, v)| format!("{}: {:?}", k, v))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
     // Handle CORS preflight
     if req.method() == Method::OPTIONS {
         return Ok(Response::builder()
@@ -134,6 +146,11 @@ pub async fn handle_request(
             || req.method() == Method::HEAD
             || req.method() == Method::POST)
     {
+        println!(
+            "🔍 HTTP: Handling OAuth metadata request: {} {}",
+            req.method(),
+            req.uri().path()
+        );
         return handle_oauth_metadata(auth_service, req.method()).await;
     }
 
@@ -263,11 +280,23 @@ pub async fn handle_request(
         }
     }
 
-    // Only allow POST requests for MCP endpoints
-    if req.method() != Method::POST {
+    // Handle MCP JSON-RPC requests (only for /mcp/request path)
+    if req.method() == Method::POST && req.uri().path() == "/mcp/request" {
+        // Continue with MCP request handling
+    } else {
+        // Return 404 for all other unhandled paths
+        println!(
+            "🚫 HTTP: Unknown path {} {} - returning 404",
+            req.method(),
+            req.uri().path()
+        );
         return Ok(Response::builder()
-            .status(StatusCode::METHOD_NOT_ALLOWED)
-            .body(Full::new(Bytes::from("Method not allowed")))
+            .status(StatusCode::NOT_FOUND)
+            .header("Content-Type", "application/json")
+            .header("Access-Control-Allow-Origin", "*")
+            .body(Full::new(Bytes::from(
+                "{\"error\":\"Not Found\",\"message\":\"The requested path was not found\"}",
+            )))
             .unwrap());
     }
 
