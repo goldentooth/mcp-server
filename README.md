@@ -4,9 +4,29 @@ MCP (Model Context Protocol) server for Goldentooth cluster management.
 
 ## Overview
 
-This server provides an MCP interface to interact with the Goldentooth Raspberry Pi cluster ("bramble"). It enables AI assistants to query cluster status, manage services, and perform administrative tasks.
+This server provides an MCP interface to interact with the Goldentooth Raspberry Pi cluster ("bramble"). It enables AI assistants to query cluster status, manage services, and perform administrative tasks through a set of dedicated tools.
 
 The server automatically creates new releases with incremented versions on every commit to main.
+
+## Available MCP Tools
+
+The server provides the following tools for cluster management:
+
+- **`cluster_ping`** - Ping all cluster nodes to check connectivity and basic status
+- **`cluster_status`** - Get detailed status information for specific nodes or all nodes
+- **`service_status`** - Check the status of systemd services (consul, nomad, vault, etc.) across nodes
+- **`resource_usage`** - Get memory and disk usage information for cluster nodes
+- **`cluster_info`** - Get comprehensive cluster information including node status and service membership
+
+All tools support both prefixed (`mcp__goldentooth_mcp__cluster_ping`) and unprefixed (`cluster_ping`) naming conventions for compatibility with different MCP clients.
+
+### Tool Parameters
+
+- **`cluster_ping`** - No parameters required
+- **`cluster_status`** - Optional `node` parameter to check a specific node (e.g., `"allyrion"`)
+- **`service_status`** - Required `service` parameter (e.g., `"consul"`, `"nomad"`, `"vault"`), optional `node` parameter
+- **`resource_usage`** - Optional `node` parameter to check a specific node
+- **`cluster_info`** - No parameters required
 
 ## Building
 
@@ -143,7 +163,7 @@ The pre-commit configuration includes:
 - `goldentooth-mcp.service` - Systemd service file
 
 ### Testing
-The project includes comprehensive tests covering 100% of the public API:
+The project includes comprehensive tests covering all functionality:
 
 ```bash
 # Run all tests
@@ -151,23 +171,69 @@ cargo test
 
 # Run with output
 cargo test -- --nocapture
+
+# Run specific test
+cargo test test_extract_tool_name
 ```
 
 Test coverage includes:
 - Service creation and cloning
 - Server info structure (name, version, capabilities)
-- Request handling (currently returns unimplemented)
+- MCP tool request handling for all 5 tools
+- Tool name extraction (prefixed/unprefixed handling)
 - Notification handling (accepts all notifications)
 - Service trait implementation (Send + Sync + 'static)
+- Authentication flow and JWT validation
+- HTTP server endpoints and error handling
 - Integration tests for service lifecycle
+- Security tests (certificate validation, secret disclosure prevention)
 
 ### Adding features
-The server currently provides a minimal MCP implementation. To add tools and resources:
+The server provides a full MCP implementation with cluster management tools. To add new tools and resources:
 
-1. Implement tool handlers in the `handle_request` method
-2. Add resource providers for cluster data
-3. Update server capabilities in `get_info`
-4. Add corresponding tests for new functionality
+1. Add new tool handlers in the `handle_request` method's match statement
+2. Implement the tool logic in dedicated handler methods (following the `handle_*` pattern)
+3. Add resource providers for cluster data if needed
+4. Update server capabilities in `get_info` if adding new capability types
+5. Add comprehensive unit tests for new functionality
+6. Update this README with documentation for new tools
+
+## Troubleshooting
+
+### Common Issues
+
+#### "Method not found" (-32601) errors
+- **Cause**: MCP client is sending prefixed tool names that don't match server expectations
+- **Solution**: This should be automatically handled as of v0.0.23+. Ensure you're using the latest version.
+- **Verification**: The server supports both `cluster_ping` and `mcp__goldentooth_mcp__cluster_ping` formats
+
+#### Authentication failures
+- **Cause**: Missing or invalid OAuth configuration
+- **Solution**: Verify `OAUTH_CLIENT_SECRET` and `AUTHELIA_BASE_URL` environment variables
+- **Test**: Run `cargo run --example test_auth` to verify authentication setup
+
+#### Connection refused errors
+- **Cause**: Server not running or wrong port
+- **Solution**: Check if server is running with `systemctl status goldentooth-mcp` or start manually
+- **Default ports**: 8080 for HTTP mode, stdin/stdout for MCP mode
+
+#### Permission denied accessing cluster nodes
+- **Cause**: SSH keys not properly configured or missing cluster access
+- **Solution**: Ensure the server has appropriate SSH access to cluster nodes
+- **Test**: Manually SSH to cluster nodes to verify connectivity
+
+### Deployment with Ansible
+
+The MCP server can be deployed across the cluster using the Goldentooth Ansible role:
+
+```bash
+# Deploy to all cluster nodes
+goldentooth setup_mcp_server
+
+# Or manually with Ansible
+cd ../ansible
+ansible-playbook playbooks/setup_mcp_server.yaml
+```
 
 ## License
 
