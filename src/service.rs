@@ -47,6 +47,21 @@ impl Default for GoldentoothService {
 }
 
 impl GoldentoothService {
+    /// Extract the base tool name from a potentially prefixed tool name.
+    /// MCP clients may prefix tool names with server identifiers like "mcp__goldentooth_mcp__".
+    /// This function extracts the actual tool name after the last "__" separator.
+    fn extract_tool_name(tool_name: &str) -> &str {
+        if tool_name.contains("__") {
+            tool_name
+                .split("__")
+                .last()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(tool_name)
+        } else {
+            tool_name
+        }
+    }
+
     pub fn new() -> Self {
         let auth_config = AuthConfig::default();
         let auth_service = if AuthService::new(auth_config.clone()).requires_auth() {
@@ -303,11 +318,7 @@ impl Service<RoleServer> for GoldentoothService {
                     let arguments = &tool_request.params.arguments;
 
                     // Handle prefixed tool names by extracting the last component after '__'
-                    let effective_tool_name = if tool_name.contains("__") {
-                        tool_name.split("__").last().unwrap_or(tool_name.as_ref())
-                    } else {
-                        tool_name.as_ref()
-                    };
+                    let effective_tool_name = Self::extract_tool_name(tool_name);
 
                     match effective_tool_name {
                         "cluster_ping" => match self.handle_cluster_ping().await {
@@ -664,5 +675,46 @@ mod tests {
         // Verify the service can be used in static contexts
         fn assert_static<T: 'static>() {}
         assert_static::<GoldentoothService>();
+    }
+
+    #[test]
+    fn test_extract_tool_name() {
+        // Test normal tool names without prefixes
+        assert_eq!(
+            GoldentoothService::extract_tool_name("cluster_ping"),
+            "cluster_ping"
+        );
+        assert_eq!(
+            GoldentoothService::extract_tool_name("service_status"),
+            "service_status"
+        );
+
+        // Test prefixed tool names
+        assert_eq!(
+            GoldentoothService::extract_tool_name("mcp__goldentooth_mcp__cluster_ping"),
+            "cluster_ping"
+        );
+        assert_eq!(
+            GoldentoothService::extract_tool_name("some__nested__tool__name"),
+            "name"
+        );
+
+        // Test edge cases
+        assert_eq!(
+            GoldentoothService::extract_tool_name("__cluster_ping"),
+            "cluster_ping"
+        );
+        assert_eq!(
+            GoldentoothService::extract_tool_name("mcp__goldentooth__"),
+            "mcp__goldentooth__"
+        ); // Empty suffix returns original
+        assert_eq!(GoldentoothService::extract_tool_name("__"), "__"); // All empty returns original
+        assert_eq!(GoldentoothService::extract_tool_name(""), ""); // Empty string
+
+        // Test single underscore (not double)
+        assert_eq!(
+            GoldentoothService::extract_tool_name("mcp_tool_name"),
+            "mcp_tool_name"
+        );
     }
 }
