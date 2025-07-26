@@ -1,4 +1,4 @@
-use crate::auth::AuthService;
+use crate::auth::{AuthService, create_safe_code_preview};
 use crate::service::GoldentoothService;
 use http_body_util::{BodyExt, Full};
 use hyper::{
@@ -16,6 +16,11 @@ use tokio::net::TcpListener;
 const OAUTH_WELL_KNOWN_PATH: &str = "/.well-known/oauth-authorization-server";
 const OIDC_WELL_KNOWN_PATH: &str = "/.well-known/openid-configuration";
 const OAUTH_PROTECTED_RESOURCE_PATH: &str = "/.well-known/oauth-protected-resource";
+
+// Request size limits for DoS protection
+const MAX_REQUEST_BODY_SIZE: usize = 1024 * 1024; // 1MB
+#[allow(dead_code)]
+const MAX_HEADER_SIZE: usize = 8192; // 8KB
 
 pub struct HttpServer {
     service: GoldentoothService,
@@ -63,6 +68,15 @@ impl HttpServer {
         body: &str,
         auth_header: Option<&str>,
     ) -> Result<String, String> {
+        // Check request size limit first
+        if body.len() > MAX_REQUEST_BODY_SIZE {
+            return Err(format!(
+                "Request body too large: {} bytes exceeds maximum {} bytes",
+                body.len(),
+                MAX_REQUEST_BODY_SIZE
+            ));
+        }
+
         let mut headers = HashMap::new();
         if let Some(auth) = auth_header {
             headers.insert("authorization".to_string(), auth.to_string());
@@ -97,12 +111,34 @@ impl HttpServer {
     }
 }
 
-pub async fn handle_request(
-    req: Request<hyper::body::Incoming>,
-    service: GoldentoothService,
-    auth_service: Option<AuthService>,
-) -> Result<Response<Full<Bytes>>, Infallible> {
-    // Log all incoming requests for debugging
+/// Handle CORS preflight requests
+fn handle_cors_preflight() -> Result<Response<Full<Bytes>>, Infallible> {
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        .header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Authorization",
+        )
+        .body(Full::new(Bytes::new()))
+        .unwrap())
+}
+
+/// Handle health check endpoint
+fn handle_health_check() -> Result<Response<Full<Bytes>>, Infallible> {
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .header("Access-Control-Allow-Origin", "*")
+        .body(Full::new(Bytes::from(
+            r#"{"status":"healthy","service":"goldentooth-mcp"}"#,
+        )))
+        .unwrap())
+}
+
+/// Log incoming request for debugging
+fn log_request(req: &Request<hyper::body::Incoming>) {
     println!(
         "🌐 HTTP: {} {} - Headers: {:?}",
         req.method(),
@@ -113,87 +149,30 @@ pub async fn handle_request(
             .collect::<Vec<_>>()
             .join(", ")
     );
+}
 
-    // Handle CORS preflight
-    if req.method() == Method::OPTIONS {
-        return Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header("Access-Control-Allow-Origin", "*")
-            .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            .header(
-                "Access-Control-Allow-Headers",
-                "Content-Type, Authorization",
-            )
-            .body(Full::new(Bytes::new()))
-            .unwrap());
-    }
+/// Handle OAuth callback endpoint
+fn handle_oauth_callback(
+    req: &Request<hyper::body::Incoming>,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    // Extract query parameters
+    let query = req.uri().query().unwrap_or("");
+    let mut params = std::collections::HashMap::new();
 
-    // Handle health check endpoint
-    if req.method() == Method::GET && req.uri().path() == "/health" {
-        return Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header("Content-Type", "application/json")
-            .header("Access-Control-Allow-Origin", "*")
-            .body(Full::new(Bytes::from(
-                r#"{"status":"healthy","service":"goldentooth-mcp"}"#,
-            )))
-            .unwrap());
-    }
-
-    // Handle OAuth well-known endpoints (public, no authentication required)
-    // Support GET, HEAD, and POST methods (some clients may use POST for discovery)
-    if (req.uri().path() == OAUTH_WELL_KNOWN_PATH || req.uri().path() == OIDC_WELL_KNOWN_PATH)
-        && (req.method() == Method::GET
-            || req.method() == Method::HEAD
-            || req.method() == Method::POST)
-    {
-        println!(
-            "🔍 HTTP: Handling OAuth metadata request: {} {}",
-            req.method(),
-            req.uri().path()
-        );
-        return handle_oauth_metadata(auth_service, req.method()).await;
-    }
-
-    // Handle OAuth Protected Resource Metadata endpoint
-    if req.uri().path() == OAUTH_PROTECTED_RESOURCE_PATH
-        && (req.method() == Method::GET
-            || req.method() == Method::HEAD
-            || req.method() == Method::POST)
-    {
-        println!(
-            "🔍 HTTP: Handling OAuth protected resource metadata request: {} {}",
-            req.method(),
-            req.uri().path()
-        );
-        return handle_oauth_protected_resource_metadata(req.method()).await;
-    }
-
-    // Handle authentication endpoints (public, no authentication required)
-    if req.uri().path().starts_with("/auth/") {
-        return handle_auth_request(req, auth_service).await;
-    }
-
-    // Handle OAuth callback endpoint
-    if req.method() == Method::GET && req.uri().path() == "/callback" {
-        // Extract query parameters
-        let query = req.uri().query().unwrap_or("");
-        let mut params = std::collections::HashMap::new();
-
-        // Proper query string parsing with URL decoding
-        for pair in query.split('&') {
-            if let Some((key, value)) = pair.split_once('=') {
-                let decoded_key = urlencoding::decode(key).unwrap_or_else(|_| key.into());
-                let decoded_value = urlencoding::decode(value).unwrap_or_else(|_| value.into());
-                params.insert(decoded_key.to_string(), decoded_value.to_string());
-            }
+    // Proper query string parsing with URL decoding
+    for pair in query.split('&') {
+        if let Some((key, value)) = pair.split_once('=') {
+            let decoded_key = urlencoding::decode(key).unwrap_or_else(|_| key.into());
+            let decoded_value = urlencoding::decode(value).unwrap_or_else(|_| value.into());
+            params.insert(decoded_key.to_string(), decoded_value.to_string());
         }
+    }
 
-        if let Some(code) = params.get("code") {
-            // Display the authorization code for the user to copy (HTML-escaped for security)
-            let escaped_code = html_escape(code);
-            let html = format!(
-                r#"<!DOCTYPE html>
+    if let Some(code) = params.get("code") {
+        // Display the authorization code for the user to copy (HTML-escaped for security)
+        let escaped_code = html_escape(code);
+        let html = format!(
+            r#"<!DOCTYPE html>
 <html>
 <head>
     <title>MCP Authorization</title>
@@ -238,21 +217,21 @@ pub async fn handle_request(
     </script>
 </body>
 </html>"#,
-                escaped_code
-            );
+            escaped_code
+        );
 
-            return Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("Content-Type", "text/html; charset=utf-8")
-                .body(Full::new(Bytes::from(html)))
-                .unwrap());
-        } else if let Some(error) = params.get("error") {
-            // Handle OAuth error (HTML-escaped for security)
-            let error_desc = params.get("error_description").unwrap_or(error);
-            let escaped_error = html_escape(error);
-            let escaped_error_desc = html_escape(error_desc);
-            let html = format!(
-                r#"<!DOCTYPE html>
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("Content-Type", "text/html; charset=utf-8")
+            .body(Full::new(Bytes::from(html)))
+            .unwrap())
+    } else if let Some(error) = params.get("error") {
+        // Handle OAuth error (HTML-escaped for security)
+        let error_desc = params.get("error_description").unwrap_or(error);
+        let escaped_error = html_escape(error);
+        let escaped_error_desc = html_escape(error_desc);
+        let html = format!(
+            r#"<!DOCTYPE html>
 <html>
 <head>
     <title>Authorization Error</title>
@@ -275,24 +254,81 @@ pub async fn handle_request(
     <p><a href="/">Try again</a></p>
 </body>
 </html>"#,
-                escaped_error, escaped_error_desc
-            );
+            escaped_error, escaped_error_desc
+        );
 
-            return Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("Content-Type", "text/html; charset=utf-8")
-                .body(Full::new(Bytes::from(html)))
-                .unwrap());
-        } else {
-            // No code or error parameter
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("Content-Type", "text/plain")
-                .body(Full::new(Bytes::from(
-                    "Missing authorization code or error parameter",
-                )))
-                .unwrap());
-        }
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("Content-Type", "text/html; charset=utf-8")
+            .body(Full::new(Bytes::from(html)))
+            .unwrap())
+    } else {
+        // No code or error parameter
+        Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .header("Content-Type", "text/plain")
+            .body(Full::new(Bytes::from(
+                "Missing authorization code or error parameter",
+            )))
+            .unwrap())
+    }
+}
+
+pub async fn handle_request(
+    req: Request<hyper::body::Incoming>,
+    service: GoldentoothService,
+    auth_service: Option<AuthService>,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    // Log all incoming requests for debugging
+    log_request(&req);
+
+    // Handle CORS preflight
+    if req.method() == Method::OPTIONS {
+        return handle_cors_preflight();
+    }
+
+    // Handle health check endpoint
+    if req.method() == Method::GET && req.uri().path() == "/health" {
+        return handle_health_check();
+    }
+
+    // Handle OAuth well-known endpoints (public, no authentication required)
+    // Support GET, HEAD, and POST methods (some clients may use POST for discovery)
+    if (req.uri().path() == OAUTH_WELL_KNOWN_PATH || req.uri().path() == OIDC_WELL_KNOWN_PATH)
+        && (req.method() == Method::GET
+            || req.method() == Method::HEAD
+            || req.method() == Method::POST)
+    {
+        println!(
+            "🔍 HTTP: Handling OAuth metadata request: {} {}",
+            req.method(),
+            req.uri().path()
+        );
+        return handle_oauth_metadata(auth_service, req.method()).await;
+    }
+
+    // Handle OAuth Protected Resource Metadata endpoint
+    if req.uri().path() == OAUTH_PROTECTED_RESOURCE_PATH
+        && (req.method() == Method::GET
+            || req.method() == Method::HEAD
+            || req.method() == Method::POST)
+    {
+        println!(
+            "🔍 HTTP: Handling OAuth protected resource metadata request: {} {}",
+            req.method(),
+            req.uri().path()
+        );
+        return handle_oauth_protected_resource_metadata(req.method()).await;
+    }
+
+    // Handle authentication endpoints (public, no authentication required)
+    if req.uri().path().starts_with("/auth/") {
+        return handle_auth_request(req, auth_service).await;
+    }
+
+    // Handle OAuth callback endpoint
+    if req.method() == Method::GET && req.uri().path() == "/callback" {
+        return handle_oauth_callback(&req);
     }
 
     // Handle MCP JSON-RPC requests (only for /mcp/request path)
@@ -316,27 +352,10 @@ pub async fn handle_request(
             .unwrap());
     }
 
-    // Extract headers for authentication first (before consuming req)
-    let mut headers = HashMap::new();
-    for (name, value) in req.headers() {
-        if let Ok(value_str) = value.to_str() {
-            headers.insert(name.to_string(), value_str.to_string());
-        }
-    }
-
-    // Read request body to determine if this is an initialize request
-    let body = match req.collect().await {
-        Ok(body) => body.to_bytes(),
-        Err(e) => {
-            println!("❌ HTTP: Failed to read request body: {}", e);
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("Access-Control-Allow-Origin", "*")
-                .body(Full::new(Bytes::from(
-                    "{\"error\":\"Failed to read request body\"}",
-                )))
-                .unwrap());
-        }
+    // Read request body with size limits to prevent DoS attacks
+    let (body, headers) = match collect_request_body_with_size_limit(req).await {
+        Ok((body, headers)) => (body, headers),
+        Err(response) => return Ok(response),
     };
 
     // Parse JSON to check if this is an initialize or tools/list request
@@ -351,116 +370,18 @@ pub async fn handle_request(
 
     println!("🔍 MCP: Skip auth for request: {}", skip_auth);
 
-    println!(
-        "🔐 AUTH: Extracted headers: {:?}",
-        headers.keys().collect::<Vec<_>>()
-    );
-
     // Check authentication if enabled, but skip for certain requests
-    if let Some(ref auth) = auth_service {
-        if !skip_auth {
-            println!("🔒 AUTH: Authentication service enabled, checking headers...");
-            if let Some(auth_header) = headers.get("authorization") {
-                println!(
-                    "🔑 AUTH: Found authorization header: {}...",
-                    if auth_header.len() > 20 {
-                        &auth_header[..20]
-                    } else {
-                        auth_header
-                    }
-                );
-                if let Some(token) = auth_header.strip_prefix("Bearer ") {
-                    println!("🎫 AUTH: Extracted Bearer token (length: {})", token.len());
-                    match auth.validate_token(token).await {
-                        Ok(claims) => {
-                            println!(
-                                "✅ AUTH: Token validation successful for user: {}",
-                                claims.sub
-                            );
-                            // Authentication successful, continue
-                        }
-                        Err(e) => {
-                            println!("❌ AUTH: Token validation failed: {}", e);
-                            eprintln!("Authentication failed: {}", e);
-                            return Ok(Response::builder()
-                                .status(StatusCode::UNAUTHORIZED)
-                                .header("Access-Control-Allow-Origin", "*")
-                                .body(Full::new(Bytes::from(format!(
-                                    "{{\"error\":\"Authentication failed: {}\"}}",
-                                    e
-                                ))))
-                                .unwrap());
-                        }
-                    }
-                } else {
-                    println!("❌ AUTH: Authorization header missing 'Bearer ' prefix");
-                    return Ok(Response::builder()
-                        .status(StatusCode::UNAUTHORIZED)
-                        .header("Access-Control-Allow-Origin", "*")
-                        .body(Full::new(Bytes::from(
-                            "{\"error\":\"Invalid authorization header format\"}",
-                        )))
-                        .unwrap());
-                }
-            } else {
-                println!("❌ AUTH: No authorization header found in request");
-                return Ok(Response::builder()
-                    .status(StatusCode::UNAUTHORIZED)
-                    .header("Access-Control-Allow-Origin", "*")
-                    .body(Full::new(Bytes::from(
-                        "{\"error\":\"Missing authorization header\"}",
-                    )))
-                    .unwrap());
-            }
-        } else {
-            println!("🚀 AUTH: Skipping authentication for unauthenticated method");
+    match check_request_authentication(&headers, auth_service.as_ref(), skip_auth).await {
+        Ok(()) => {
+            // Authentication successful or not required, continue
         }
-    } else {
-        println!("🔓 AUTH: No authentication service configured, proceeding without auth");
+        Err(response) => return Ok(response),
     }
 
-    // Body is already read above
-
-    let body_str = String::from_utf8_lossy(&body);
-    println!(
-        "📨 MCP: Request body (length: {}): {}",
-        body.len(),
-        if body_str.len() > 200 {
-            format!("{}...", &body_str[..200])
-        } else {
-            body_str.to_string()
-        }
-    );
-
-    // Parse JSON-RPC request
-    let json_rpc: Value = match serde_json::from_slice::<Value>(&body) {
-        Ok(json) => {
-            println!("✅ JSON: Successfully parsed JSON-RPC request");
-            if let Some(method) = json.get("method").and_then(|m| m.as_str()) {
-                println!("🔧 MCP: Method: {}", method);
-                if method == "initialize" {
-                    println!("🚀 MCP: INITIALIZE REQUEST DETECTED!");
-                    if let Some(params) = json.get("params") {
-                        println!(
-                            "📋 MCP: Initialize params: {}",
-                            serde_json::to_string_pretty(params)
-                                .unwrap_or_else(|_| "failed to serialize".to_string())
-                        );
-                    }
-                }
-            }
-            json
-        }
-        Err(e) => {
-            println!("❌ JSON: Invalid JSON in request body: {}", e);
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("Access-Control-Allow-Origin", "*")
-                .body(Full::new(Bytes::from(
-                    "{\"error\":\"Invalid JSON in request body\"}",
-                )))
-                .unwrap());
-        }
+    // Parse JSON-RPC request from body
+    let json_rpc = match parse_json_rpc_request(&body) {
+        Ok(json) => json,
+        Err(response) => return Ok(response),
     };
 
     // Handle the JSON-RPC request
@@ -683,6 +604,68 @@ pub fn html_escape(input: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#x27;")
+}
+
+/// Safely collect request body with size limits to prevent DoS attacks
+async fn collect_request_body_with_size_limit(
+    req: Request<hyper::body::Incoming>,
+) -> Result<(Bytes, std::collections::HashMap<String, String>), Response<Full<Bytes>>> {
+    // Extract headers first
+    let mut headers = std::collections::HashMap::new();
+    for (name, value) in req.headers() {
+        if let Ok(value_str) = value.to_str() {
+            headers.insert(name.to_string(), value_str.to_string());
+        }
+    }
+
+    // Check content-length header if present
+    if let Some(content_length_str) = headers.get("content-length") {
+        if let Ok(content_length) = content_length_str.parse::<usize>() {
+            if content_length > MAX_REQUEST_BODY_SIZE {
+                return Err(Response::builder()
+                    .status(StatusCode::PAYLOAD_TOO_LARGE)
+                    .header("Content-Type", "application/json")
+                    .header("Access-Control-Allow-Origin", "*")
+                    .body(Full::new(Bytes::from(format!(
+                        "{{\"error\":\"Request body too large: {} bytes exceeds maximum {} bytes\"}}",
+                        content_length, MAX_REQUEST_BODY_SIZE
+                    ))))
+                    .unwrap());
+            }
+        }
+    }
+
+    // Collect body with size limit
+    let body = match req.collect().await {
+        Ok(body) => {
+            let bytes = body.to_bytes();
+            if bytes.len() > MAX_REQUEST_BODY_SIZE {
+                return Err(Response::builder()
+                    .status(StatusCode::PAYLOAD_TOO_LARGE)
+                    .header("Content-Type", "application/json")
+                    .header("Access-Control-Allow-Origin", "*")
+                    .body(Full::new(Bytes::from(format!(
+                        "{{\"error\":\"Request body too large: {} bytes exceeds maximum {} bytes\"}}",
+                        bytes.len(), MAX_REQUEST_BODY_SIZE
+                    ))))
+                    .unwrap());
+            }
+            bytes
+        }
+        Err(e) => {
+            return Err(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header("Content-Type", "application/json")
+                .header("Access-Control-Allow-Origin", "*")
+                .body(Full::new(Bytes::from(format!(
+                    "{{\"error\":\"Failed to read request body: {}\"}}",
+                    e
+                ))))
+                .unwrap());
+        }
+    };
+
+    Ok((body, headers))
 }
 
 #[allow(dead_code)]
@@ -932,14 +915,9 @@ async fn handle_auth_request(
                 }
             };
 
-            let code_preview = if code.len() > 40 {
-                format!("{}...{}", &code[..20], &code[code.len() - 20..])
-            } else {
-                code.to_string()
-            };
             println!(
                 "🔄 HTTP: Processing token exchange request with code: {}",
-                code_preview
+                create_safe_code_preview(code)
             );
 
             match auth.exchange_code_for_token(code).await {
@@ -1051,6 +1029,125 @@ async fn handle_auth_request(
                 .header("Access-Control-Allow-Origin", "*")
                 .body(Full::new(Bytes::from(
                     serde_json::json!({"error": "Auth endpoint not found"}).to_string(),
+                )))
+                .unwrap())
+        }
+    }
+}
+
+async fn check_request_authentication(
+    headers: &HashMap<String, String>,
+    auth_service: Option<&AuthService>,
+    skip_auth: bool,
+) -> Result<(), Response<Full<Bytes>>> {
+    println!(
+        "🔐 AUTH: Extracted headers: {:?}",
+        headers.keys().collect::<Vec<_>>()
+    );
+
+    if let Some(auth) = auth_service {
+        if !skip_auth {
+            println!("🔒 AUTH: Authentication service enabled, checking headers...");
+            if let Some(auth_header) = headers.get("authorization") {
+                println!(
+                    "🔑 AUTH: Found authorization header: {}...",
+                    if auth_header.len() > 20 {
+                        &auth_header[..20]
+                    } else {
+                        auth_header
+                    }
+                );
+                if let Some(token) = auth_header.strip_prefix("Bearer ") {
+                    println!("🎫 AUTH: Extracted Bearer token (length: {})", token.len());
+                    match auth.validate_token(token).await {
+                        Ok(claims) => {
+                            println!(
+                                "✅ AUTH: Token validation successful for user: {}",
+                                claims.sub
+                            );
+                            // Authentication successful, continue
+                        }
+                        Err(e) => {
+                            println!("❌ AUTH: Token validation failed: {}", e);
+                            eprintln!("Authentication failed: {}", e);
+                            return Err(Response::builder()
+                                .status(StatusCode::UNAUTHORIZED)
+                                .header("Access-Control-Allow-Origin", "*")
+                                .body(Full::new(Bytes::from(format!(
+                                    "{{\"error\":\"Authentication failed: {}\"}}",
+                                    e
+                                ))))
+                                .unwrap());
+                        }
+                    }
+                } else {
+                    println!("❌ AUTH: Authorization header missing 'Bearer ' prefix");
+                    return Err(Response::builder()
+                        .status(StatusCode::UNAUTHORIZED)
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(Full::new(Bytes::from(
+                            "{\"error\":\"Invalid authorization header format\"}",
+                        )))
+                        .unwrap());
+                }
+            } else {
+                println!("❌ AUTH: No authorization header found in request");
+                return Err(Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .header("Access-Control-Allow-Origin", "*")
+                    .body(Full::new(Bytes::from(
+                        "{\"error\":\"Missing authorization header\"}",
+                    )))
+                    .unwrap());
+            }
+        } else {
+            println!("🚀 AUTH: Skipping authentication for unauthenticated method");
+        }
+    } else {
+        println!("🔓 AUTH: No authentication service configured, proceeding without auth");
+    }
+
+    Ok(())
+}
+
+fn parse_json_rpc_request(body: &[u8]) -> Result<Value, Response<Full<Bytes>>> {
+    let body_str = String::from_utf8_lossy(body);
+    println!(
+        "📨 MCP: Request body (length: {}): {}",
+        body.len(),
+        if body_str.len() > 200 {
+            format!("{}...", &body_str[..200])
+        } else {
+            body_str.to_string()
+        }
+    );
+
+    // Parse JSON-RPC request
+    match serde_json::from_slice::<Value>(body) {
+        Ok(json) => {
+            println!("✅ JSON: Successfully parsed JSON-RPC request");
+            if let Some(method) = json.get("method").and_then(|m| m.as_str()) {
+                println!("🔧 MCP: Method: {}", method);
+                if method == "initialize" {
+                    println!("🚀 MCP: INITIALIZE REQUEST DETECTED!");
+                    if let Some(params) = json.get("params") {
+                        println!(
+                            "📋 MCP: Initialize params: {}",
+                            serde_json::to_string_pretty(params)
+                                .unwrap_or_else(|_| "failed to serialize".to_string())
+                        );
+                    }
+                }
+            }
+            Ok(json)
+        }
+        Err(e) => {
+            println!("❌ JSON: Invalid JSON in request body: {}", e);
+            Err(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header("Access-Control-Allow-Origin", "*")
+                .body(Full::new(Bytes::from(
+                    "{\"error\":\"Invalid JSON in request body\"}",
                 )))
                 .unwrap())
         }

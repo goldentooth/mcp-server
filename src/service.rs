@@ -1,4 +1,6 @@
 use crate::auth::{AuthConfig, AuthError, AuthService};
+use crate::cluster::{ClusterOperations, DefaultClusterOperations};
+use crate::command::SystemCommandExecutor;
 use rmcp::{
     RoleServer, Service,
     model::{
@@ -9,11 +11,33 @@ use rmcp::{
 };
 use serde_json::{Value, json};
 use std::future::Future;
-use std::process::Command;
 
-#[derive(Clone)]
 pub struct GoldentoothService {
     auth_service: Option<AuthService>,
+    cluster_ops: Box<dyn ClusterOperations + Send + Sync>,
+}
+
+impl std::fmt::Debug for GoldentoothService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GoldentoothService")
+            .field("auth_service", &self.auth_service.is_some())
+            .finish()
+    }
+}
+
+impl Clone for GoldentoothService {
+    fn clone(&self) -> Self {
+        // For testing, we'll create a new instance with same config
+        // In production, this would need proper cloning of cluster_ops
+        if let Some(auth_service) = &self.auth_service {
+            GoldentoothService {
+                auth_service: Some(auth_service.clone()),
+                cluster_ops: Box::new(DefaultClusterOperations::new(SystemCommandExecutor::new())),
+            }
+        } else {
+            GoldentoothService::new()
+        }
+    }
 }
 
 impl Default for GoldentoothService {
@@ -31,7 +55,27 @@ impl GoldentoothService {
             None
         };
 
-        GoldentoothService { auth_service }
+        let executor = SystemCommandExecutor::new();
+        let cluster_ops = Box::new(DefaultClusterOperations::new(executor));
+
+        GoldentoothService {
+            auth_service,
+            cluster_ops,
+        }
+    }
+
+    pub fn with_cluster_operations(cluster_ops: Box<dyn ClusterOperations + Send + Sync>) -> Self {
+        let auth_config = AuthConfig::default();
+        let auth_service = if AuthService::new(auth_config.clone()).requires_auth() {
+            Some(AuthService::new(auth_config))
+        } else {
+            None
+        };
+
+        GoldentoothService {
+            auth_service,
+            cluster_ops,
+        }
     }
 
     pub async fn with_auth() -> Result<(Self, AuthService), AuthError> {
@@ -39,8 +83,12 @@ impl GoldentoothService {
         let mut auth_service = AuthService::new(auth_config);
         auth_service.initialize().await?;
 
+        let executor = SystemCommandExecutor::new();
+        let cluster_ops = Box::new(DefaultClusterOperations::new(executor));
+
         let service = GoldentoothService {
             auth_service: Some(auth_service.clone()),
+            cluster_ops,
         };
 
         Ok((service, auth_service))
@@ -91,82 +139,75 @@ impl GoldentoothService {
         }
     }
 
-    #[allow(dead_code)]
-    async fn execute_goldentooth_command(&self, args: &[&str]) -> Result<String, String> {
-        let output = Command::new("goldentooth")
-            .args(args)
-            .output()
-            .map_err(|e| format!("Failed to execute goldentooth command: {}", e))?;
-
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(format!("Command failed: {}", stderr))
-        }
-    }
-
-    #[allow(dead_code)]
-    async fn handle_cluster_ping(&self) -> Result<Value, ErrorData> {
-        match self.execute_goldentooth_command(&["ping", "all"]).await {
-            Ok(output) => Ok(json!({
+    pub async fn handle_cluster_ping_v2(&self) -> Result<Value, ErrorData> {
+        match self.cluster_ops.ping_all_nodes().await {
+            Ok(nodes) => Ok(json!({
                 "success": true,
-                "output": output,
+                "nodes": nodes,
                 "tool": "cluster_ping"
             })),
             Err(error) => Ok(json!({
                 "success": false,
-                "error": error,
+                "error": error.to_string(),
                 "tool": "cluster_ping"
             })),
         }
     }
 
     #[allow(dead_code)]
-    async fn handle_cluster_status(&self, node: Option<&str>) -> Result<Value, ErrorData> {
-        let args = if let Some(node_name) = node {
-            vec!["uptime", node_name]
-        } else {
-            vec!["uptime", "all"]
-        };
+    pub async fn handle_cluster_ping(&self) -> Result<Value, ErrorData> {
+        self.handle_cluster_ping_v2().await
+    }
 
-        match self.execute_goldentooth_command(&args).await {
-            Ok(output) => Ok(json!({
-                "success": true,
-                "output": output,
-                "tool": "cluster_status",
-                "node": node
-            })),
-            Err(error) => Ok(json!({
-                "success": false,
-                "error": error,
-                "tool": "cluster_status",
-                "node": node
-            })),
+    #[allow(dead_code)]
+    pub async fn handle_cluster_status(&self, node: Option<&str>) -> Result<Value, ErrorData> {
+        if let Some(node_name) = node {
+            match self.cluster_ops.get_node_status(node_name).await {
+                Ok(status) => Ok(json!({
+                    "success": true,
+                    "node": status,
+                    "tool": "cluster_status"
+                })),
+                Err(error) => Ok(json!({
+                    "success": false,
+                    "error": error.to_string(),
+                    "tool": "cluster_status"
+                })),
+            }
+        } else {
+            // Get all nodes status
+            match self.cluster_ops.ping_all_nodes().await {
+                Ok(nodes) => Ok(json!({
+                    "success": true,
+                    "nodes": nodes,
+                    "tool": "cluster_status"
+                })),
+                Err(error) => Ok(json!({
+                    "success": false,
+                    "error": error.to_string(),
+                    "tool": "cluster_status"
+                })),
+            }
         }
     }
 
     #[allow(dead_code)]
-    async fn handle_service_status(
+    pub async fn handle_service_status(
         &self,
         service: &str,
         node: Option<&str>,
     ) -> Result<Value, ErrorData> {
-        let node_arg = node.unwrap_or("all");
-        let command = format!("systemctl status {}", service);
-        let args = vec!["command", node_arg, &command];
-
-        match self.execute_goldentooth_command(&args).await {
-            Ok(output) => Ok(json!({
+        match self.cluster_ops.get_service_status(service, node).await {
+            Ok(statuses) => Ok(json!({
                 "success": true,
-                "output": output,
+                "services": statuses,
                 "tool": "service_status",
                 "service": service,
                 "node": node
             })),
             Err(error) => Ok(json!({
                 "success": false,
-                "error": error,
+                "error": error.to_string(),
                 "tool": "service_status",
                 "service": service,
                 "node": node
@@ -175,20 +216,17 @@ impl GoldentoothService {
     }
 
     #[allow(dead_code)]
-    async fn handle_resource_usage(&self, node: Option<&str>) -> Result<Value, ErrorData> {
-        let node_arg = node.unwrap_or("all");
-        let args = vec!["command", node_arg, "free -h && df -h"];
-
-        match self.execute_goldentooth_command(&args).await {
-            Ok(output) => Ok(json!({
+    pub async fn handle_resource_usage(&self, node: Option<&str>) -> Result<Value, ErrorData> {
+        match self.cluster_ops.get_resource_usage(node).await {
+            Ok(usage_map) => Ok(json!({
                 "success": true,
-                "output": output,
+                "resources": usage_map,
                 "tool": "resource_usage",
                 "node": node
             })),
             Err(error) => Ok(json!({
                 "success": false,
-                "error": error,
+                "error": error.to_string(),
                 "tool": "resource_usage",
                 "node": node
             })),
@@ -196,25 +234,35 @@ impl GoldentoothService {
     }
 
     #[allow(dead_code)]
-    async fn handle_cluster_info(&self) -> Result<Value, ErrorData> {
-        // Get basic cluster information - nodes, services, etc.
-        match self.execute_goldentooth_command(&["ping", "all"]).await {
-            Ok(ping_output) => {
-                // Try to get additional info about cluster services
-                let services_result = self
-                    .execute_goldentooth_command(&["command", "jast", "consul members"])
-                    .await;
+    pub async fn handle_cluster_info(&self) -> Result<Value, ErrorData> {
+        // Get comprehensive cluster information
+        match self.cluster_ops.ping_all_nodes().await {
+            Ok(nodes) => {
+                // Try to get service status for key services
+                let consul_status = self
+                    .cluster_ops
+                    .get_service_status("consul", None)
+                    .await
+                    .ok();
+                let nomad_status = self
+                    .cluster_ops
+                    .get_service_status("nomad", None)
+                    .await
+                    .ok();
 
                 Ok(json!({
                     "success": true,
-                    "ping_status": ping_output,
-                    "consul_members": services_result.unwrap_or_else(|e| format!("Could not get consul members: {}", e)),
+                    "nodes": nodes,
+                    "services": {
+                        "consul": consul_status,
+                        "nomad": nomad_status,
+                    },
                     "tool": "cluster_info"
                 }))
             }
             Err(error) => Ok(json!({
                 "success": false,
-                "error": error,
+                "error": error.to_string(),
                 "tool": "cluster_info"
             })),
         }
@@ -266,8 +314,27 @@ impl Service<RoleServer> for GoldentoothService {
                                     rmcp::model::CallToolResult::success(vec![content]);
                                 Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
                             }
-                            Err(_) => {
-                                let content = rmcp::model::Content::text("Failed to ping cluster");
+                            Err(error_data) => {
+                                eprintln!(
+                                    "Cluster ping failed with error {}: {}",
+                                    error_data.code.0, error_data.message
+                                );
+                                let detailed_message = format!(
+                                    "Failed to ping cluster - Error {}: {} {}",
+                                    error_data.code.0,
+                                    error_data.message,
+                                    error_data
+                                        .data
+                                        .as_ref()
+                                        .map(|d| format!(
+                                            "(Details: {})",
+                                            serde_json::to_string(d).unwrap_or_else(|_| {
+                                                "<serialization error>".to_string()
+                                            })
+                                        ))
+                                        .unwrap_or_else(|| "".to_string())
+                                );
+                                let content = rmcp::model::Content::text(detailed_message);
                                 let tool_result = rmcp::model::CallToolResult::error(vec![content]);
                                 Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
                             }
@@ -289,9 +356,27 @@ impl Service<RoleServer> for GoldentoothService {
                                         rmcp::model::CallToolResult::success(vec![content]);
                                     Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
                                 }
-                                Err(_) => {
-                                    let content =
-                                        rmcp::model::Content::text("Failed to get cluster status");
+                                Err(error_data) => {
+                                    eprintln!(
+                                        "Cluster status failed with error {}: {}",
+                                        error_data.code.0, error_data.message
+                                    );
+                                    let detailed_message = format!(
+                                        "Failed to get cluster status - Error {}: {} {}",
+                                        error_data.code.0,
+                                        error_data.message,
+                                        error_data
+                                            .data
+                                            .as_ref()
+                                            .map(|d| format!(
+                                                "(Details: {})",
+                                                serde_json::to_string(d).unwrap_or_else(|_| {
+                                                    "<serialization error>".to_string()
+                                                })
+                                            ))
+                                            .unwrap_or_else(|| "".to_string())
+                                    );
+                                    let content = rmcp::model::Content::text(detailed_message);
                                     let tool_result =
                                         rmcp::model::CallToolResult::error(vec![content]);
                                     Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
@@ -321,9 +406,27 @@ impl Service<RoleServer> for GoldentoothService {
                                         rmcp::model::CallToolResult::success(vec![content]);
                                     Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
                                 }
-                                Err(_) => {
-                                    let content =
-                                        rmcp::model::Content::text("Failed to get service status");
+                                Err(error_data) => {
+                                    eprintln!(
+                                        "Service status failed with error {}: {}",
+                                        error_data.code.0, error_data.message
+                                    );
+                                    let detailed_message = format!(
+                                        "Failed to get service status - Error {}: {} {}",
+                                        error_data.code.0,
+                                        error_data.message,
+                                        error_data
+                                            .data
+                                            .as_ref()
+                                            .map(|d| format!(
+                                                "(Details: {})",
+                                                serde_json::to_string(d).unwrap_or_else(|_| {
+                                                    "<serialization error>".to_string()
+                                                })
+                                            ))
+                                            .unwrap_or_else(|| "".to_string())
+                                    );
+                                    let content = rmcp::model::Content::text(detailed_message);
                                     let tool_result =
                                         rmcp::model::CallToolResult::error(vec![content]);
                                     Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
@@ -347,9 +450,27 @@ impl Service<RoleServer> for GoldentoothService {
                                         rmcp::model::CallToolResult::success(vec![content]);
                                     Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
                                 }
-                                Err(_) => {
-                                    let content =
-                                        rmcp::model::Content::text("Failed to get resource usage");
+                                Err(error_data) => {
+                                    eprintln!(
+                                        "Resource usage failed with error {}: {}",
+                                        error_data.code.0, error_data.message
+                                    );
+                                    let detailed_message = format!(
+                                        "Failed to get resource usage - Error {}: {} {}",
+                                        error_data.code.0,
+                                        error_data.message,
+                                        error_data
+                                            .data
+                                            .as_ref()
+                                            .map(|d| format!(
+                                                "(Details: {})",
+                                                serde_json::to_string(d).unwrap_or_else(|_| {
+                                                    "<serialization error>".to_string()
+                                                })
+                                            ))
+                                            .unwrap_or_else(|| "".to_string())
+                                    );
+                                    let content = rmcp::model::Content::text(detailed_message);
                                     let tool_result =
                                         rmcp::model::CallToolResult::error(vec![content]);
                                     Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
@@ -367,9 +488,27 @@ impl Service<RoleServer> for GoldentoothService {
                                     rmcp::model::CallToolResult::success(vec![content]);
                                 Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
                             }
-                            Err(_) => {
-                                let content =
-                                    rmcp::model::Content::text("Failed to get cluster info");
+                            Err(error_data) => {
+                                eprintln!(
+                                    "Cluster info failed with error {}: {}",
+                                    error_data.code.0, error_data.message
+                                );
+                                let detailed_message = format!(
+                                    "Failed to get cluster info - Error {}: {} {}",
+                                    error_data.code.0,
+                                    error_data.message,
+                                    error_data
+                                        .data
+                                        .as_ref()
+                                        .map(|d| format!(
+                                            "(Details: {})",
+                                            serde_json::to_string(d).unwrap_or_else(|_| {
+                                                "<serialization error>".to_string()
+                                            })
+                                        ))
+                                        .unwrap_or_else(|| "".to_string())
+                                );
+                                let content = rmcp::model::Content::text(detailed_message);
                                 let tool_result = rmcp::model::CallToolResult::error(vec![content]);
                                 Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
                             }
