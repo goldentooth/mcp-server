@@ -302,7 +302,14 @@ impl Service<RoleServer> for GoldentoothService {
                     let tool_name = &tool_request.params.name;
                     let arguments = &tool_request.params.arguments;
 
-                    match tool_name.as_ref() {
+                    // Handle prefixed tool names by extracting the last component after '__'
+                    let effective_tool_name = if tool_name.contains("__") {
+                        tool_name.split("__").last().unwrap_or(tool_name.as_ref())
+                    } else {
+                        tool_name.as_ref()
+                    };
+
+                    match effective_tool_name {
                         "cluster_ping" => match self.handle_cluster_ping().await {
                             Ok(result) => {
                                 let content = rmcp::model::Content::text(
@@ -516,7 +523,7 @@ impl Service<RoleServer> for GoldentoothService {
                         _ => {
                             Err(ErrorData {
                                 code: ErrorCode(-32601), // Method not found
-                                message: format!("Unknown tool: {}", tool_name).into(),
+                                message: format!("Unknown tool: {}", effective_tool_name).into(),
                                 data: None,
                             })
                         }
