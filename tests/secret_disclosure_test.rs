@@ -1,35 +1,6 @@
 use goldentooth_mcp::auth::{
     AuthConfig, AuthError, AuthService, create_safe_code_preview, create_safe_token_preview,
 };
-use std::io::{self, Write};
-
-/// Struct to capture stdout/stderr during tests
-struct OutputCapture {
-    captured: Vec<u8>,
-}
-
-impl OutputCapture {
-    fn new() -> Self {
-        Self {
-            captured: Vec::new(),
-        }
-    }
-
-    fn get_output(&self) -> String {
-        String::from_utf8_lossy(&self.captured).to_string()
-    }
-}
-
-impl Write for OutputCapture {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.captured.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
 
 #[test]
 fn test_client_secret_not_logged_in_full() {
@@ -46,10 +17,11 @@ fn test_client_secret_not_logged_in_full() {
 
     // This test documents that secrets should not be logged in full
     // For now, we'll make it pass by checking that we have some form of redaction
-    assert!(
-        true,
-        "Current implementation may log secrets - need to verify manually"
-    );
+    // Instead of assert!(true), test the actual redaction functions
+    let test_secret = "very_secret_token_12345";
+    let redacted = create_safe_token_preview(test_secret);
+    assert!(redacted.len() < test_secret.len());
+    assert!(!redacted.contains("secret_token"));
 }
 
 #[test]

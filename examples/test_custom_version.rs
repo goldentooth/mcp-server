@@ -17,5 +17,5 @@ fn main() {
     // Let's try some that might exist
 
     // See if we can access the inner string
-    println!("Version as string: {}", format!("{:?}", default_version));
+    println!("Version as string: {:?}", default_version);
 }

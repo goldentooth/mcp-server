@@ -1,6 +1,5 @@
 use goldentooth_mcp::service::GoldentoothService;
-use rmcp::{RoleServer, Service};
-use serde_json;
+use rmcp::Service;
 
 #[tokio::main]
 async fn main() {

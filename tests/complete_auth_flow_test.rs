@@ -1,7 +1,6 @@
 use goldentooth_mcp::auth::{AuthConfig, AuthService};
 use goldentooth_mcp::http_server::HttpServer;
 use goldentooth_mcp::service::GoldentoothService;
-use reqwest;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::env;
