@@ -253,7 +253,7 @@ async fn test_end_to_end_oauth_flow() {
 
     let client = reqwest::Client::new();
     let metadata_response = client
-        .get(&format!(
+        .get(format!(
             "{}/.well-known/oauth-authorization-server",
             mcp_base_url
         ))
@@ -280,7 +280,7 @@ async fn test_end_to_end_oauth_flow() {
     println!("🔗 Step 2: Getting authorization URL...");
 
     let auth_url_response = client
-        .post(&format!("{}/auth/authorize", mcp_base_url))
+        .post(format!("{}/auth/authorize", mcp_base_url))
         .header("Content-Type", "application/json")
         .body("{}")
         .send()
@@ -341,7 +341,7 @@ async fn test_end_to_end_oauth_flow() {
     });
 
     let token_response = client
-        .post(&format!("{}/auth/token", mcp_base_url))
+        .post(format!("{}/auth/token", mcp_base_url))
         .header("Content-Type", "application/json")
         .body(token_request.to_string())
         .send()
@@ -375,7 +375,7 @@ async fn test_end_to_end_oauth_flow() {
     println!("🔍 Step 6: Testing HEAD request behavior...");
 
     let head_response = client
-        .head(&format!(
+        .head(format!(
             "{}/.well-known/oauth-authorization-server",
             mcp_base_url
         ))
@@ -408,7 +408,7 @@ async fn test_end_to_end_oauth_flow() {
     });
 
     let unauth_response = client
-        .post(&format!("{}/mcp/request", mcp_base_url))
+        .post(format!("{}/mcp/request", mcp_base_url))
         .header("Content-Type", "application/json")
         .body(mcp_request.to_string())
         .send()
@@ -482,7 +482,7 @@ async fn test_claude_code_discovery_scenario() {
 
     // 1. Try to discover OAuth metadata (this was returning HTTP 405 before our fix)
     let oauth_metadata_response = client
-        .get(&format!(
+        .get(format!(
             "{}/.well-known/oauth-authorization-server",
             base_url
         ))
@@ -495,7 +495,7 @@ async fn test_claude_code_discovery_scenario() {
 
     // 2. Also test the OpenID Connect discovery endpoint
     let oidc_metadata_response = client
-        .get(&format!("{}/.well-known/openid-configuration", base_url))
+        .get(format!("{}/.well-known/openid-configuration", base_url))
         .send()
         .await
         .expect("Failed to fetch OIDC metadata");
@@ -512,7 +512,7 @@ async fn test_claude_code_discovery_scenario() {
     // (This is actually correct behavior - our OAuth endpoints only handle GET/HEAD,
     // other methods fall through to the main request handler)
     let post_response = client
-        .post(&format!(
+        .post(format!(
             "{}/.well-known/oauth-authorization-server",
             base_url
         ))
@@ -562,7 +562,7 @@ async fn test_oauth_error_scenarios() {
 
     // Should return 404 when OAuth not configured
     let response = client
-        .get(&format!(
+        .get(format!(
             "{}/.well-known/oauth-authorization-server",
             base_url
         ))

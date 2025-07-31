@@ -89,9 +89,17 @@ async fn test_streaming_request_size_limit() {
 #[test]
 fn test_size_limit_constants() {
     // RED PHASE: These constants should be defined somewhere
-    assert!(DEFAULT_MAX_REQUEST_SIZE > 0);
-    assert!(MAX_HEADER_SIZE > 0);
-    assert!(DEFAULT_MAX_REQUEST_SIZE <= 5 * 1024 * 1024); // Should be reasonable (<=5MB)
+    // Test the actual constant values rather than using assert! with compile-time constants
+    assert_eq!(DEFAULT_MAX_REQUEST_SIZE, 1024 * 1024); // 1MB
+    assert_eq!(MAX_HEADER_SIZE, 8192); // 8KB
+    // Verify size is reasonable - this is a runtime check on the constant value
+    let max_reasonable_size = 5 * 1024 * 1024; // 5MB
+    assert!(
+        DEFAULT_MAX_REQUEST_SIZE <= max_reasonable_size,
+        "Request size limit {} should be <= {}",
+        DEFAULT_MAX_REQUEST_SIZE,
+        max_reasonable_size
+    );
 }
 
 // These types and functions don't exist yet - will cause compilation failures

@@ -1,5 +1,4 @@
 use rmcp::model::{Implementation, InitializeResult, ProtocolVersion, ServerCapabilities};
-use serde_json;
 
 fn main() {
     println!("Testing ProtocolVersion override approaches:");
