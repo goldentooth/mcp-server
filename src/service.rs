@@ -1,6 +1,5 @@
 use crate::auth::{AuthConfig, AuthError, AuthService};
 use crate::cluster::{ClusterOperations, DefaultClusterOperations};
-use crate::command::SystemCommandExecutor;
 use rmcp::{
     RoleServer, Service,
     model::{
@@ -66,8 +65,7 @@ impl GoldentoothService {
             None
         };
 
-        let executor = SystemCommandExecutor::new();
-        let cluster_ops = Arc::new(DefaultClusterOperations::new(executor));
+        let cluster_ops = Arc::new(DefaultClusterOperations::new());
 
         GoldentoothService {
             auth_service,
@@ -94,8 +92,7 @@ impl GoldentoothService {
         let mut auth_service = AuthService::new(auth_config);
         auth_service.initialize().await?;
 
-        let executor = SystemCommandExecutor::new();
-        let cluster_ops = Arc::new(DefaultClusterOperations::new(executor));
+        let cluster_ops = Arc::new(DefaultClusterOperations::new());
 
         let service = GoldentoothService {
             auth_service: Some(auth_service.clone()),
