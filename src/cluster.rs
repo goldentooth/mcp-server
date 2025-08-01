@@ -110,51 +110,65 @@ impl<E: CommandExecutor> DefaultClusterOperations<E> {
     }
 
     /// TCP "ping" - attempt to connect to a specific port to test connectivity
-    async fn tcp_ping(&self, ip: IpAddr, port: u16, _timeout: Duration) -> bool {
+    async fn tcp_ping(&self, ip: IpAddr, port: u16, timeout_duration: Duration) -> bool {
         use tokio::net::TcpStream;
         use tokio::time::timeout;
 
         let addr = std::net::SocketAddr::new(ip, port);
-        match timeout(Duration::from_secs(2), TcpStream::connect(addr)).await {
+        match timeout(timeout_duration, TcpStream::connect(addr)).await {
             Ok(Ok(_)) => true,
             Ok(Err(_)) | Err(_) => false,
         }
+    }
+
+    /// Ping a single node with ICMP, falling back to TCP if needed
+    async fn ping_single_node(
+        &self,
+        node_name: String,
+        ip_str: String,
+    ) -> Result<NodeStatus, ClusterOperationError> {
+        let ip_addr = IpAddr::from_str(&ip_str).map_err(|e| {
+            ClusterOperationError::NetworkError(format!("Invalid IP {}: {}", ip_str, e))
+        })?;
+
+        // Try ICMP ping first, fall back to TCP connect if it fails due to permissions
+        let timeout = Duration::from_secs(2);
+        let is_online = match ping(ip_addr, Some(timeout), None, None, None, None) {
+            Ok(_) => true,
+            Err(ping_err) => {
+                // If ICMP fails (likely due to permissions), try TCP connect to SSH port (22)
+                log::debug!(
+                    "ICMP ping failed for {}: {}, trying TCP connect",
+                    node_name,
+                    ping_err
+                );
+                self.tcp_ping(ip_addr, 22, timeout).await
+            }
+        };
+
+        Ok(NodeStatus {
+            name: node_name,
+            is_online,
+            uptime: None,
+            load_average: None,
+        })
     }
 }
 
 #[async_trait]
 impl<E: CommandExecutor + Send + Sync> ClusterOperations for DefaultClusterOperations<E> {
     async fn ping_all_nodes(&self) -> Result<Vec<NodeStatus>, ClusterOperationError> {
-        let mut nodes = Vec::new();
+        use futures::future::join_all;
 
-        for (node_name, ip_str) in NODE_IPS.iter() {
-            let ip_addr = IpAddr::from_str(ip_str).map_err(|e| {
-                ClusterOperationError::NetworkError(format!("Invalid IP {}: {}", ip_str, e))
-            })?;
+        let ping_futures: Vec<_> = NODE_IPS
+            .iter()
+            .map(|(node_name, ip_str)| {
+                self.ping_single_node(node_name.to_string(), ip_str.to_string())
+            })
+            .collect();
 
-            // Try ICMP ping first, fall back to TCP connect if it fails due to permissions
-            let timeout = Duration::from_secs(2);
-            let is_online = match ping(ip_addr, Some(timeout), None, None, None, None) {
-                Ok(_) => true,
-                Err(ping_err) => {
-                    // If ICMP fails (likely due to permissions), try TCP connect to SSH port (22)
-                    eprintln!(
-                        "ICMP ping failed for {}: {}, trying TCP connect",
-                        node_name, ping_err
-                    );
-                    self.tcp_ping(ip_addr, 22, timeout).await
-                }
-            };
-
-            nodes.push(NodeStatus {
-                name: node_name.to_string(),
-                is_online,
-                uptime: None,
-                load_average: None,
-            });
-        }
-
-        Ok(nodes)
+        let results = join_all(ping_futures).await;
+        results.into_iter().collect()
     }
 
     async fn get_node_status(&self, node: &str) -> Result<NodeStatus, ClusterOperationError> {
@@ -360,6 +374,9 @@ fn parse_size_to_gb(size_str: &str) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::MockCommandExecutor;
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::time::Duration;
 
     #[test]
     fn test_parse_size_to_mb() {
@@ -374,5 +391,104 @@ mod tests {
         assert_eq!(parse_size_to_gb("59G"), 59.0);
         assert_eq!(parse_size_to_gb("255M"), 0.249_023_44);
         assert_eq!(parse_size_to_gb("2T"), 2048.0);
+    }
+
+    #[test]
+    fn test_node_ips_static_map() {
+        // Verify all expected nodes are present
+        assert_eq!(NODE_IPS.len(), 13);
+
+        // Test Pi nodes
+        assert_eq!(NODE_IPS.get("allyrion"), Some(&"10.4.0.10"));
+        assert_eq!(NODE_IPS.get("bettley"), Some(&"10.4.0.11"));
+        assert_eq!(NODE_IPS.get("lipps"), Some(&"10.4.0.21"));
+
+        // Test x86 GPU node
+        assert_eq!(NODE_IPS.get("velaryon"), Some(&"10.4.0.30"));
+
+        // Test non-existent node
+        assert_eq!(NODE_IPS.get("nonexistent"), None);
+    }
+
+    #[tokio::test]
+    async fn test_tcp_ping_localhost() {
+        let executor = MockCommandExecutor::new();
+        let cluster_ops = DefaultClusterOperations::new(executor);
+
+        // Test TCP "ping" to localhost on a port that should be closed
+        let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let timeout = Duration::from_millis(100);
+
+        // This should fail quickly for a closed port
+        let result = cluster_ops.tcp_ping(localhost, 65432, timeout).await;
+        assert!(!result, "TCP ping to closed port should fail");
+    }
+
+    #[tokio::test]
+    async fn test_ping_single_node_invalid_ip() {
+        let executor = MockCommandExecutor::new();
+        let cluster_ops = DefaultClusterOperations::new(executor);
+
+        let result = cluster_ops
+            .ping_single_node("test".to_string(), "invalid.ip".to_string())
+            .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ClusterOperationError::NetworkError(msg) => {
+                assert!(msg.contains("Invalid IP"));
+            }
+            _ => panic!("Expected NetworkError"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ping_single_node_valid_format() {
+        let executor = MockCommandExecutor::new();
+        let cluster_ops = DefaultClusterOperations::new(executor);
+
+        // Use localhost IP - this may or may not succeed depending on ICMP permissions
+        // but should at least not error on IP parsing
+        let result = cluster_ops
+            .ping_single_node("localhost".to_string(), "127.0.0.1".to_string())
+            .await;
+
+        assert!(result.is_ok());
+        let node_status = result.unwrap();
+        assert_eq!(node_status.name, "localhost");
+        assert!(node_status.uptime.is_none());
+        assert!(node_status.load_average.is_none());
+        // is_online may be true or false depending on system configuration
+    }
+
+    #[test]
+    fn test_cluster_operation_error_variants() {
+        let cmd_error = ClusterOperationError::CommandFailed("test".to_string());
+        assert_eq!(format!("{}", cmd_error), "Command failed: test");
+
+        let parse_error = ClusterOperationError::ParseError("test".to_string());
+        assert_eq!(format!("{}", parse_error), "Parse error: test");
+
+        let network_error = ClusterOperationError::NetworkError("test".to_string());
+        assert_eq!(format!("{}", network_error), "Network error: test");
+    }
+
+    #[tokio::test]
+    async fn test_ping_all_nodes_structure() {
+        let executor = MockCommandExecutor::new();
+        let cluster_ops = DefaultClusterOperations::new(executor);
+
+        // This test verifies the structure and parallel execution
+        // Individual pings may fail, but the overall structure should work
+        let result = cluster_ops.ping_all_nodes().await;
+
+        assert!(result.is_ok());
+        let nodes = result.unwrap();
+        assert_eq!(nodes.len(), 13);
+
+        // Verify all expected node names are present
+        let node_names: Vec<String> = nodes.iter().map(|n| n.name.clone()).collect();
+        assert!(node_names.contains(&"allyrion".to_string()));
+        assert!(node_names.contains(&"velaryon".to_string()));
     }
 }
