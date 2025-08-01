@@ -182,11 +182,16 @@ impl<E: CommandExecutor + Send + Sync> ClusterOperations for DefaultClusterOpera
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
-            .map_err(|e| ClusterOperationError::NetworkError(format!("HTTP client error: {}", e)))?;
+            .map_err(|e| {
+                ClusterOperationError::NetworkError(format!("HTTP client error: {}", e))
+            })?;
 
         let url = format!("http://{}:9100/metrics", ip_str);
         let response = client.get(&url).send().await.map_err(|e| {
-            ClusterOperationError::NetworkError(format!("Failed to connect to node_exporter on {}: {}", node, e))
+            ClusterOperationError::NetworkError(format!(
+                "Failed to connect to node_exporter on {}: {}",
+                node, e
+            ))
         })?;
 
         if !response.status().is_success() {
@@ -199,7 +204,10 @@ impl<E: CommandExecutor + Send + Sync> ClusterOperations for DefaultClusterOpera
         }
 
         let metrics_text = response.text().await.map_err(|e| {
-            ClusterOperationError::NetworkError(format!("Failed to read metrics from {}: {}", node, e))
+            ClusterOperationError::NetworkError(format!(
+                "Failed to read metrics from {}: {}",
+                node, e
+            ))
         })?;
 
         let (uptime, load_average) = self.parse_node_exporter_metrics(&metrics_text)?;
@@ -319,9 +327,12 @@ impl<E: CommandExecutor + Send + Sync> ClusterOperations for DefaultClusterOpera
 }
 
 impl<E: CommandExecutor> DefaultClusterOperations<E> {
-    /// Parse node_exporter metrics to extract uptime and load averages  
+    /// Parse node_exporter metrics to extract uptime and load averages
     /// Returns (uptime_string, load_average_tuple)
-    fn parse_node_exporter_metrics(&self, metrics_text: &str) -> Result<MetricsParseResult, ClusterOperationError> {
+    fn parse_node_exporter_metrics(
+        &self,
+        metrics_text: &str,
+    ) -> Result<MetricsParseResult, ClusterOperationError> {
         let mut boot_time: Option<f64> = None;
         let mut load1: Option<f32> = None;
         let mut load5: Option<f32> = None;
@@ -344,13 +355,11 @@ impl<E: CommandExecutor> DefaultClusterOperations<E> {
                 if let Some(value_str) = line.split_whitespace().nth(1) {
                     load1 = value_str.parse().ok();
                 }
-            }
-            else if line.starts_with("node_load5 ") {
+            } else if line.starts_with("node_load5 ") {
                 if let Some(value_str) = line.split_whitespace().nth(1) {
                     load5 = value_str.parse().ok();
                 }
-            }
-            else if line.starts_with("node_load15 ") {
+            } else if line.starts_with("node_load15 ") {
                 if let Some(value_str) = line.split_whitespace().nth(1) {
                     load15 = value_str.parse().ok();
                 }
@@ -361,9 +370,11 @@ impl<E: CommandExecutor> DefaultClusterOperations<E> {
         let uptime = if let Some(boot_timestamp) = boot_time {
             let current_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|e| ClusterOperationError::ParseError(format!("System time error: {}", e)))?
+                .map_err(|e| {
+                    ClusterOperationError::ParseError(format!("System time error: {}", e))
+                })?
                 .as_secs() as f64;
-            
+
             let uptime_seconds = current_time - boot_timestamp;
             if uptime_seconds > 0.0 {
                 Some(format_uptime(uptime_seconds as u64))
@@ -426,6 +437,109 @@ fn format_uptime(seconds: u64) -> String {
         format!("{} days, {}:{:02}", days, hours, minutes)
     } else {
         format!("{}:{:02}", hours, minutes)
+    }
+}
+
+/// Mock implementation of ClusterOperations for testing
+/// Available when testing to avoid real network calls
+#[cfg(test)]
+pub struct MockClusterOperations;
+
+#[cfg(test)]
+#[async_trait]
+impl ClusterOperations for MockClusterOperations {
+    async fn ping_all_nodes(&self) -> Result<Vec<NodeStatus>, ClusterOperationError> {
+        // Return mock data for all 13 nodes
+        let nodes = vec![
+            NodeStatus {
+                name: "allyrion".to_string(),
+                is_online: true,
+                uptime: Some("5 days, 3:15".to_string()),
+                load_average: Some((0.15, 0.20, 0.18)),
+            },
+            NodeStatus {
+                name: "bettley".to_string(),
+                is_online: true,
+                uptime: Some("3 days, 12:30".to_string()),
+                load_average: Some((0.25, 0.30, 0.35)),
+            },
+            NodeStatus {
+                name: "velaryon".to_string(),
+                is_online: true,
+                uptime: Some("1 days, 8:45".to_string()),
+                load_average: Some((0.10, 0.15, 0.12)),
+            },
+            // Add a few more for realism
+            NodeStatus {
+                name: "cargyll".to_string(),
+                is_online: true,
+                uptime: Some("2 days, 6:20".to_string()),
+                load_average: Some((0.05, 0.08, 0.10)),
+            },
+        ];
+        Ok(nodes)
+    }
+
+    async fn get_node_status(&self, node: &str) -> Result<NodeStatus, ClusterOperationError> {
+        Ok(NodeStatus {
+            name: node.to_string(),
+            is_online: true,
+            uptime: Some("5 days, 3:15".to_string()),
+            load_average: Some((0.15, 0.20, 0.18)),
+        })
+    }
+
+    async fn get_service_status(
+        &self,
+        service: &str,
+        node: Option<&str>,
+    ) -> Result<Vec<ServiceStatus>, ClusterOperationError> {
+        let nodes = if let Some(n) = node {
+            vec![n.to_string()]
+        } else {
+            vec!["allyrion".to_string(), "bettley".to_string()]
+        };
+
+        let mut statuses = Vec::new();
+        for node_name in nodes {
+            statuses.push(ServiceStatus {
+                name: service.to_string(),
+                node: node_name,
+                is_active: true,
+                is_enabled: true,
+                uptime: Some("2h 30m".to_string()),
+            });
+        }
+        Ok(statuses)
+    }
+
+    async fn get_resource_usage(
+        &self,
+        node: Option<&str>,
+    ) -> Result<HashMap<String, ResourceUsage>, ClusterOperationError> {
+        let mut result = HashMap::new();
+        let node_name = node.unwrap_or("allyrion").to_string();
+
+        result.insert(
+            node_name.clone(),
+            ResourceUsage {
+                memory: MemoryUsage {
+                    total_mb: 8192,
+                    used_mb: 2048,
+                    free_mb: 6144,
+                    percent_used: 25.0,
+                },
+                disk: vec![DiskUsage {
+                    filesystem: "/dev/sda1".to_string(),
+                    total_gb: 500.0,
+                    used_gb: 100.0,
+                    available_gb: 400.0,
+                    percent_used: 20.0,
+                    mount_point: "/".to_string(),
+                }],
+            },
+        );
+        Ok(result)
     }
 }
 
@@ -590,7 +704,7 @@ node_memory_MemTotal_bytes 8589934592
         assert!(result.is_ok());
 
         let (uptime, load_average) = result.unwrap();
-        
+
         // Uptime should be calculated from boot time (will vary with current time)
         assert!(uptime.is_some());
         let uptime_str = uptime.unwrap();
@@ -616,7 +730,7 @@ node_load1 0.15
         assert!(result.is_ok());
 
         let (uptime, load_average) = result.unwrap();
-        
+
         // Should have uptime but no complete load average
         assert!(uptime.is_some());
         assert_eq!(load_average, None);
@@ -653,5 +767,15 @@ node_load1 0.15
         let (uptime, load_average) = result.unwrap();
         assert_eq!(uptime, None);
         assert_eq!(load_average, None);
+    }
+
+    #[tokio::test]
+    async fn test_mock_cluster_operations() {
+        let mock_ops = MockClusterOperations;
+        let result = mock_ops.ping_all_nodes().await;
+        assert!(result.is_ok());
+        let nodes = result.unwrap();
+        assert_eq!(nodes.len(), 4); // We mock 4 nodes
+        assert_eq!(nodes[0].name, "allyrion");
     }
 }
