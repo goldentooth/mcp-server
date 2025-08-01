@@ -319,7 +319,7 @@ mod tests {
     #[test]
     fn test_parse_size_to_gb() {
         assert_eq!(parse_size_to_gb("59G"), 59.0);
-        assert_eq!(parse_size_to_gb("255M"), 0.249023437);
+        assert_eq!(parse_size_to_gb("255M"), 0.249_023_44);
         assert_eq!(parse_size_to_gb("2T"), 2048.0);
     }
 }

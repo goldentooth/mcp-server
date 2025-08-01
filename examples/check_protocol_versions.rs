@@ -10,10 +10,7 @@ fn main() {
     // This will compile if they exist, otherwise will fail compilation
 
     // Let's see what the Debug representation shows
-    println!(
-        "String representation: {}",
-        format!("{:?}", ProtocolVersion::V_2024_11_05)
-    );
+    println!("String representation: {:?}", ProtocolVersion::V_2024_11_05);
 
     // Also check if we can create from string
     // (this might not be implemented but worth checking)

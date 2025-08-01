@@ -573,6 +573,197 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
             println!("✅ TOOLS: Returning {} tools", tools.len());
             response.to_string()
         }
+        "tools/call" => {
+            println!("🔧 TOOLS: Processing tools/call request");
+
+            // Extract tool name and arguments from params
+            let params = request.get("params");
+            let tool_name = params.and_then(|p| p.get("name")).and_then(|n| n.as_str());
+            let arguments = params
+                .and_then(|p| p.get("arguments"))
+                .and_then(|a| a.as_object());
+
+            println!("🔧 TOOLS: Tool name: {:?}", tool_name);
+            println!("🔧 TOOLS: Arguments: {:?}", arguments);
+
+            if let Some(name) = tool_name {
+                println!("🚀 TOOLS: Executing tool: {}", name);
+
+                // Convert arguments to a more usable format
+                let args_map: std::collections::HashMap<String, serde_json::Value> = arguments
+                    .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                    .unwrap_or_default();
+
+                // Execute the appropriate tool
+                let tool_result = match name {
+                    "cluster_ping" => {
+                        println!("🏓 TOOLS: Executing cluster_ping");
+                        match service.handle_cluster_ping().await {
+                            Ok(result) => {
+                                println!("✅ TOOLS: cluster_ping succeeded");
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Failed to serialize result".to_string())
+                                    }],
+                                    "isError": false
+                                })
+                            }
+                            Err(error_data) => {
+                                println!("❌ TOOLS: cluster_ping failed: {}", error_data.message);
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": format!("Error: {}", error_data.message)
+                                    }],
+                                    "isError": true
+                                })
+                            }
+                        }
+                    }
+                    "cluster_status" => {
+                        let node = args_map.get("node").and_then(|v| v.as_str());
+                        println!("📊 TOOLS: Executing cluster_status for node: {:?}", node);
+                        match service.handle_cluster_status(node).await {
+                            Ok(result) => {
+                                println!("✅ TOOLS: cluster_status succeeded");
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Failed to serialize result".to_string())
+                                    }],
+                                    "isError": false
+                                })
+                            }
+                            Err(error_data) => {
+                                println!("❌ TOOLS: cluster_status failed: {}", error_data.message);
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": format!("Error: {}", error_data.message)
+                                    }],
+                                    "isError": true
+                                })
+                            }
+                        }
+                    }
+                    "service_status" => {
+                        let service_name = args_map
+                            .get("service")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("consul");
+                        let node = args_map.get("node").and_then(|v| v.as_str());
+                        println!(
+                            "🔧 TOOLS: Executing service_status for service: {}, node: {:?}",
+                            service_name, node
+                        );
+                        match service.handle_service_status(service_name, node).await {
+                            Ok(result) => {
+                                println!("✅ TOOLS: service_status succeeded");
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Failed to serialize result".to_string())
+                                    }],
+                                    "isError": false
+                                })
+                            }
+                            Err(error_data) => {
+                                println!("❌ TOOLS: service_status failed: {}", error_data.message);
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": format!("Error: {}", error_data.message)
+                                    }],
+                                    "isError": true
+                                })
+                            }
+                        }
+                    }
+                    "resource_usage" => {
+                        let node = args_map.get("node").and_then(|v| v.as_str());
+                        println!("💾 TOOLS: Executing resource_usage for node: {:?}", node);
+                        match service.handle_resource_usage(node).await {
+                            Ok(result) => {
+                                println!("✅ TOOLS: resource_usage succeeded");
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Failed to serialize result".to_string())
+                                    }],
+                                    "isError": false
+                                })
+                            }
+                            Err(error_data) => {
+                                println!("❌ TOOLS: resource_usage failed: {}", error_data.message);
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": format!("Error: {}", error_data.message)
+                                    }],
+                                    "isError": true
+                                })
+                            }
+                        }
+                    }
+                    "cluster_info" => {
+                        println!("ℹ️  TOOLS: Executing cluster_info");
+                        match service.handle_cluster_info().await {
+                            Ok(result) => {
+                                println!("✅ TOOLS: cluster_info succeeded");
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Failed to serialize result".to_string())
+                                    }],
+                                    "isError": false
+                                })
+                            }
+                            Err(error_data) => {
+                                println!("❌ TOOLS: cluster_info failed: {}", error_data.message);
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": format!("Error: {}", error_data.message)
+                                    }],
+                                    "isError": true
+                                })
+                            }
+                        }
+                    }
+                    _ => {
+                        println!("❌ TOOLS: Unknown tool: {}", name);
+                        serde_json::json!({
+                            "content": [{
+                                "type": "text",
+                                "text": format!("Unknown tool: {}", name)
+                            }],
+                            "isError": true
+                        })
+                    }
+                };
+
+                let response = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "result": tool_result,
+                    "id": id
+                });
+
+                println!("✅ TOOLS: Tool call completed, returning result");
+                response.to_string()
+            } else {
+                println!("❌ TOOLS: Missing tool name in request");
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32602,
+                        "message": "Invalid params: missing tool name"
+                    },
+                    "id": id
+                })
+                .to_string()
+            }
+        }
         _ => serde_json::json!({
             "jsonrpc": "2.0",
             "error": {
@@ -1426,5 +1617,189 @@ mod tests {
         use http_body_util::BodyExt;
         let body_bytes = result.into_body().collect().await.unwrap().to_bytes();
         assert!(body_bytes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_tools_call_cluster_ping() {
+        let service = GoldentoothService::new();
+        let server = HttpServer::new(service, None);
+
+        let request = r#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"cluster_ping","arguments":{}},"id":1}"#;
+        let response = server
+            .handle_request_for_test("tools/call", request, None)
+            .await
+            .unwrap();
+
+        let json: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(json["jsonrpc"], "2.0");
+        assert_eq!(json["id"], 1);
+
+        // Should have result with content array
+        assert!(json["result"]["content"].is_array());
+        let content = &json["result"]["content"][0];
+        assert_eq!(content["type"], "text");
+        assert!(content["text"].is_string());
+
+        // Should not be an error for cluster_ping (it should succeed with mock data)
+        assert_eq!(json["result"]["isError"], false);
+    }
+
+    #[tokio::test]
+    async fn test_tools_call_cluster_status_with_node() {
+        let service = GoldentoothService::new();
+        let server = HttpServer::new(service, None);
+
+        let request = r#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"cluster_status","arguments":{"node":"allyrion"}},"id":2}"#;
+        let response = server
+            .handle_request_for_test("tools/call", request, None)
+            .await
+            .unwrap();
+
+        let json: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(json["jsonrpc"], "2.0");
+        assert_eq!(json["id"], 2);
+
+        // Should have result with content array
+        assert!(json["result"]["content"].is_array());
+        let content = &json["result"]["content"][0];
+        assert_eq!(content["type"], "text");
+        assert!(content["text"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_tools_call_service_status() {
+        let service = GoldentoothService::new();
+        let server = HttpServer::new(service, None);
+
+        let request = r#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"service_status","arguments":{"service":"consul","node":"allyrion"}},"id":3}"#;
+        let response = server
+            .handle_request_for_test("tools/call", request, None)
+            .await
+            .unwrap();
+
+        let json: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(json["jsonrpc"], "2.0");
+        assert_eq!(json["id"], 3);
+
+        // Should have result with content array
+        assert!(json["result"]["content"].is_array());
+        let content = &json["result"]["content"][0];
+        assert_eq!(content["type"], "text");
+        assert!(content["text"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_tools_call_resource_usage() {
+        let service = GoldentoothService::new();
+        let server = HttpServer::new(service, None);
+
+        let request = r#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"resource_usage","arguments":{"node":"allyrion"}},"id":4}"#;
+        let response = server
+            .handle_request_for_test("tools/call", request, None)
+            .await
+            .unwrap();
+
+        let json: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(json["jsonrpc"], "2.0");
+        assert_eq!(json["id"], 4);
+
+        // Should have result with content array
+        assert!(json["result"]["content"].is_array());
+        let content = &json["result"]["content"][0];
+        assert_eq!(content["type"], "text");
+        assert!(content["text"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_tools_call_cluster_info() {
+        let service = GoldentoothService::new();
+        let server = HttpServer::new(service, None);
+
+        let request = r#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"cluster_info","arguments":{}},"id":5}"#;
+        let response = server
+            .handle_request_for_test("tools/call", request, None)
+            .await
+            .unwrap();
+
+        let json: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(json["jsonrpc"], "2.0");
+        assert_eq!(json["id"], 5);
+
+        // Should have result with content array
+        assert!(json["result"]["content"].is_array());
+        let content = &json["result"]["content"][0];
+        assert_eq!(content["type"], "text");
+        assert!(content["text"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_tools_call_unknown_tool() {
+        let service = GoldentoothService::new();
+        let server = HttpServer::new(service, None);
+
+        let request = r#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"unknown_tool","arguments":{}},"id":6}"#;
+        let response = server
+            .handle_request_for_test("tools/call", request, None)
+            .await
+            .unwrap();
+
+        let json: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(json["jsonrpc"], "2.0");
+        assert_eq!(json["id"], 6);
+
+        // Should have result with content array indicating error
+        assert!(json["result"]["content"].is_array());
+        let content = &json["result"]["content"][0];
+        assert_eq!(content["type"], "text");
+        assert!(content["text"].as_str().unwrap().contains("Unknown tool"));
+        assert_eq!(json["result"]["isError"], true);
+    }
+
+    #[tokio::test]
+    async fn test_tools_call_missing_tool_name() {
+        let service = GoldentoothService::new();
+        let server = HttpServer::new(service, None);
+
+        let request = r#"{"jsonrpc":"2.0","method":"tools/call","params":{"arguments":{}},"id":7}"#;
+        let response = server
+            .handle_request_for_test("tools/call", request, None)
+            .await
+            .unwrap();
+
+        let json: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(json["jsonrpc"], "2.0");
+        assert_eq!(json["id"], 7);
+
+        // Should have error response
+        assert_eq!(json["error"]["code"], -32602);
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("missing tool name")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tools_call_empty_arguments() {
+        let service = GoldentoothService::new();
+        let server = HttpServer::new(service, None);
+
+        let request =
+            r#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"cluster_ping"},"id":8}"#;
+        let response = server
+            .handle_request_for_test("tools/call", request, None)
+            .await
+            .unwrap();
+
+        let json: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(json["jsonrpc"], "2.0");
+        assert_eq!(json["id"], 8);
+
+        // Should still work with missing arguments object
+        assert!(json["result"]["content"].is_array());
+        let content = &json["result"]["content"][0];
+        assert_eq!(content["type"], "text");
+        assert!(content["text"].is_string());
     }
 }

@@ -1,7 +1,6 @@
 use goldentooth_mcp::auth::{AuthConfig, AuthService};
 use goldentooth_mcp::http_server::HttpServer;
 use goldentooth_mcp::service::GoldentoothService;
-use reqwest;
 use serde_json::{Value, json};
 use std::env;
 use std::time::Duration;
@@ -75,7 +74,7 @@ async fn test_with_real_jwt_token() {
     });
 
     let response = client
-        .post(&format!("{}/mcp/request", base_url))
+        .post(format!("{}/mcp/request", base_url))
         .header("Authorization", format!("Bearer {}", test_token))
         .json(&mcp_request)
         .send()

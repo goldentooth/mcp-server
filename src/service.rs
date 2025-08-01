@@ -642,14 +642,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_notification_returns_ok() {
-        let _service = GoldentoothService::new();
+        let service = GoldentoothService::new();
 
         // Since we can't easily construct the proper notification types,
         // we'll test that our implementation always returns Ok
         // The actual notification handling is tested through integration tests
 
+        // Verify the service can be created and cloned (basic functionality)
+        let _cloned_service = service.clone();
         // This tests our current implementation that always returns Ok(())
-        assert!(true);
+        // The actual notification handling would be tested with proper MCP types
     }
 
     #[tokio::test]
@@ -660,7 +662,11 @@ mod tests {
         // This is a placeholder test since we can't easily construct ClientRequest types
         // without full MCP client integration. The integration tests handle the actual
         // request/response flow testing.
-        assert!(true);
+
+        // Verify basic service functionality instead
+        let service = GoldentoothService::new();
+        let info = service.get_info();
+        assert_eq!(info.server_info.name, "goldentooth-mcp");
     }
 
     #[test]

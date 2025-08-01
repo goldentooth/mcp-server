@@ -1,7 +1,6 @@
 use goldentooth_mcp::auth::{AuthConfig, AuthService};
 use goldentooth_mcp::http_server::HttpServer;
 use goldentooth_mcp::service::GoldentoothService;
-use reqwest;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::env;
@@ -117,7 +116,7 @@ async fn test_complete_authentication_flow() {
 
     // Test OAuth authorization server metadata (RFC 8414)
     let oauth_response = client
-        .get(&format!(
+        .get(format!(
             "{}/.well-known/oauth-authorization-server",
             base_url
         ))
@@ -137,7 +136,7 @@ async fn test_complete_authentication_flow() {
 
     // Test OpenID Connect configuration
     let oidc_response = client
-        .get(&format!("{}/.well-known/openid-configuration", base_url))
+        .get(format!("{}/.well-known/openid-configuration", base_url))
         .send()
         .await
         .expect("Failed to get OIDC metadata");
@@ -262,7 +261,7 @@ async fn test_complete_authentication_flow() {
     });
 
     let token_response = client
-        .post(&format!("{}/auth/token", base_url))
+        .post(format!("{}/auth/token", base_url))
         .json(&token_request)
         .send()
         .await
@@ -323,7 +322,7 @@ async fn test_complete_authentication_flow() {
                 });
 
                 let mcp_response = client
-                    .post(&format!("{}/mcp/request", base_url))
+                    .post(format!("{}/mcp/request", base_url))
                     .header("Authorization", format!("Bearer {}", token_secret))
                     .json(&mcp_request)
                     .send()
@@ -374,7 +373,7 @@ async fn test_complete_authentication_flow() {
     });
 
     let unauth_response = client
-        .post(&format!("{}/mcp/request", base_url))
+        .post(format!("{}/mcp/request", base_url))
         .json(&unauth_mcp_request)
         .send()
         .await
@@ -418,7 +417,7 @@ async fn test_oauth_discovery_endpoints() {
 
     // Test OAuth metadata endpoint - should return 404 when auth is disabled
     let oauth_response = client
-        .get(&format!(
+        .get(format!(
             "{}/.well-known/oauth-authorization-server",
             base_url
         ))
@@ -432,7 +431,7 @@ async fn test_oauth_discovery_endpoints() {
 
     // Test OIDC configuration endpoint - should also return 404 when auth is disabled
     let oidc_response = client
-        .get(&format!("{}/.well-known/openid-configuration", base_url))
+        .get(format!("{}/.well-known/openid-configuration", base_url))
         .send()
         .await
         .expect("Failed to access OIDC configuration");

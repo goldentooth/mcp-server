@@ -1,7 +1,6 @@
 use goldentooth_mcp::auth::{AuthConfig, AuthService};
 use goldentooth_mcp::http_server::HttpServer;
 use goldentooth_mcp::service::GoldentoothService;
-use reqwest;
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -48,7 +47,7 @@ async fn test_real_jwt_validation_flow() {
 
     // Test OAuth metadata discovery
     let oauth_response = client
-        .get(&format!(
+        .get(format!(
             "{}/.well-known/oauth-authorization-server",
             base_url
         ))
@@ -65,7 +64,7 @@ async fn test_real_jwt_validation_flow() {
 
     // Test OIDC metadata discovery
     let oidc_response = client
-        .get(&format!("{}/.well-known/openid-configuration", base_url))
+        .get(format!("{}/.well-known/openid-configuration", base_url))
         .send()
         .await
         .expect("Failed to get OIDC metadata");
@@ -81,7 +80,7 @@ async fn test_real_jwt_validation_flow() {
 
     // Get authorization URL
     let auth_url_response = client
-        .post(&format!("{}/auth/authorize", base_url))
+        .post(format!("{}/auth/authorize", base_url))
         .send()
         .await
         .expect("Failed to get authorization URL");
@@ -208,7 +207,7 @@ async fn test_mcp_request_with_jwt_auth() {
     });
 
     let response = client
-        .post(&format!("{}/mcp/request", base_url))
+        .post(format!("{}/mcp/request", base_url))
         .json(&mcp_request)
         .send()
         .await
@@ -224,7 +223,7 @@ async fn test_mcp_request_with_jwt_auth() {
     println!("🔍 Testing MCP request with invalid Bearer token");
 
     let response_with_bad_token = client
-        .post(&format!("{}/mcp/request", base_url))
+        .post(format!("{}/mcp/request", base_url))
         .header("Authorization", "Bearer invalid-token-here")
         .json(&mcp_request)
         .send()
