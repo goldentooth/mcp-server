@@ -12,10 +12,10 @@ The server automatically creates new releases with incremented versions on every
 
 The server provides the following tools for cluster management:
 
-- **`cluster_ping`** - Ping all cluster nodes to check connectivity and basic status
-- **`cluster_status`** - Get detailed status information for specific nodes or all nodes
-- **`service_status`** - Check the status of systemd services (consul, nomad, vault, etc.) across nodes
-- **`resource_usage`** - Get memory and disk usage information for cluster nodes
+- **`cluster_ping`** - Ping all cluster nodes to check connectivity using ICMP (with TCP fallback)
+- **`cluster_status`** - Get detailed status information including uptime and load averages via node_exporter metrics
+- **`service_status`** - Check systemd service status across nodes via node_exporter systemd metrics
+- **`resource_usage`** - Get memory and disk usage information via node_exporter resource metrics
 - **`cluster_info`** - Get comprehensive cluster information including node status and service membership
 
 All tools support both prefixed (`mcp__goldentooth_mcp__cluster_ping`) and unprefixed (`cluster_ping`) naming conventions for compatibility with different MCP clients.
