@@ -1,7 +1,12 @@
 use crate::command::CommandExecutor;
 use async_trait::async_trait;
+use lazy_static::lazy_static;
+use ping::ping;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::IpAddr;
+use std::str::FromStr;
+use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NodeStatus {
@@ -50,6 +55,32 @@ pub enum ClusterOperationError {
     CommandFailed(String),
     #[error("Parse error: {0}")]
     ParseError(String),
+    #[error("Network error: {0}")]
+    NetworkError(String),
+}
+
+lazy_static! {
+    /// Static mapping of node names to IP addresses
+    /// Based on the Ansible inventory host_vars
+    static ref NODE_IPS: HashMap<&'static str, &'static str> = {
+        let mut map = HashMap::new();
+        // Raspberry Pi nodes
+        map.insert("allyrion", "10.4.0.10");
+        map.insert("bettley", "10.4.0.11");
+        map.insert("cargyll", "10.4.0.12");
+        map.insert("dalt", "10.4.0.13");
+        map.insert("erenford", "10.4.0.14");
+        map.insert("fenn", "10.4.0.15");
+        map.insert("gardener", "10.4.0.16");
+        map.insert("harlton", "10.4.0.17");
+        map.insert("inchfield", "10.4.0.18");
+        map.insert("jast", "10.4.0.19");
+        map.insert("karstark", "10.4.0.20");
+        map.insert("lipps", "10.4.0.21");
+        // x86 GPU node
+        map.insert("velaryon", "10.4.0.30");
+        map
+    };
 }
 
 /// ClusterOperations trait for high-level cluster management
@@ -77,28 +108,50 @@ impl<E: CommandExecutor> DefaultClusterOperations<E> {
     pub fn new(executor: E) -> Self {
         Self { executor }
     }
+
+    /// TCP "ping" - attempt to connect to a specific port to test connectivity
+    async fn tcp_ping(&self, ip: IpAddr, port: u16, _timeout: Duration) -> bool {
+        use tokio::net::TcpStream;
+        use tokio::time::timeout;
+
+        let addr = std::net::SocketAddr::new(ip, port);
+        match timeout(Duration::from_secs(2), TcpStream::connect(addr)).await {
+            Ok(Ok(_)) => true,
+            Ok(Err(_)) | Err(_) => false,
+        }
+    }
 }
 
 #[async_trait]
 impl<E: CommandExecutor + Send + Sync> ClusterOperations for DefaultClusterOperations<E> {
     async fn ping_all_nodes(&self) -> Result<Vec<NodeStatus>, ClusterOperationError> {
-        let output = self
-            .executor
-            .execute("goldentooth", &["ping", "all"])
-            .await
-            .map_err(ClusterOperationError::CommandFailed)?;
-
-        // Parse the output
         let mut nodes = Vec::new();
-        for line in output.lines() {
-            if let Some((name, status)) = line.split_once(": ") {
-                nodes.push(NodeStatus {
-                    name: name.to_string(),
-                    is_online: status.contains("online"),
-                    uptime: None,
-                    load_average: None,
-                });
-            }
+
+        for (node_name, ip_str) in NODE_IPS.iter() {
+            let ip_addr = IpAddr::from_str(ip_str).map_err(|e| {
+                ClusterOperationError::NetworkError(format!("Invalid IP {}: {}", ip_str, e))
+            })?;
+
+            // Try ICMP ping first, fall back to TCP connect if it fails due to permissions
+            let timeout = Duration::from_secs(2);
+            let is_online = match ping(ip_addr, Some(timeout), None, None, None, None) {
+                Ok(_) => true,
+                Err(ping_err) => {
+                    // If ICMP fails (likely due to permissions), try TCP connect to SSH port (22)
+                    eprintln!(
+                        "ICMP ping failed for {}: {}, trying TCP connect",
+                        node_name, ping_err
+                    );
+                    self.tcp_ping(ip_addr, 22, timeout).await
+                }
+            };
+
+            nodes.push(NodeStatus {
+                name: node_name.to_string(),
+                is_online,
+                uptime: None,
+                load_average: None,
+            });
         }
 
         Ok(nodes)
