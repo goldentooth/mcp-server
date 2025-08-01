@@ -560,6 +560,95 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
                         "properties": {}
                     }
                 }),
+                serde_json::json!({
+                    "name": "shell_command",
+                    "description": "Execute arbitrary shell commands on cluster nodes via goldentooth CLI",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "command": {
+                                "type": "string",
+                                "description": "Shell command to execute (e.g., 'systemctl status consul', 'df -h')"
+                            },
+                            "node": {
+                                "type": "string",
+                                "description": "Specific node to run command on (e.g., 'allyrion', 'jast'). If not provided, runs on allyrion."
+                            },
+                            "as_root": {
+                                "type": "boolean",
+                                "description": "Whether to execute the command as root user. Default: false"
+                            },
+                            "timeout": {
+                                "type": "integer",
+                                "description": "Command timeout in seconds. Default: 60"
+                            }
+                        },
+                        "required": ["command"]
+                    }
+                }),
+                serde_json::json!({
+                    "name": "journald_logs",
+                    "description": "Read and filter systemd journal logs from cluster nodes",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "node": {
+                                "type": "string",
+                                "description": "Specific node to read logs from (e.g., 'allyrion', 'jast'). If not provided, reads from all nodes."
+                            },
+                            "service": {
+                                "type": "string",
+                                "description": "Filter logs by systemd service/unit (e.g., 'consul.service', 'ssh.service')"
+                            },
+                            "since": {
+                                "type": "string",
+                                "description": "Show logs since specified time (e.g., '2 hours ago', 'yesterday', '2024-01-15 10:00:00')"
+                            },
+                            "lines": {
+                                "type": "integer",
+                                "description": "Maximum number of log lines to return. Default: 100"
+                            },
+                            "follow": {
+                                "type": "boolean",
+                                "description": "Follow logs in real-time (not supported in MCP context). Default: false"
+                            },
+                            "priority": {
+                                "type": "string",
+                                "description": "Filter by log priority level (0=emerg, 1=alert, 2=crit, 3=err, 4=warning, 5=notice, 6=info, 7=debug)"
+                            }
+                        }
+                    }
+                }),
+                serde_json::json!({
+                    "name": "loki_logs",
+                    "description": "Query and retrieve logs from Loki using LogQL",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "LogQL query string (e.g., '{job=\"consul\"}', '{level=\"ERROR\"} |= \"failed\"')"
+                            },
+                            "start": {
+                                "type": "string",
+                                "description": "Start time for log query (RFC3339 format or relative like '1h', '2024-01-15T10:00:00Z')"
+                            },
+                            "end": {
+                                "type": "string",
+                                "description": "End time for log query (RFC3339 format or relative like 'now', '2024-01-15T11:00:00Z')"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of log entries to return. Default: 100"
+                            },
+                            "direction": {
+                                "type": "string",
+                                "description": "Query direction: 'forward' or 'backward'. Default: backward (newest first)"
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                }),
             ];
 
             let response = serde_json::json!({
@@ -721,6 +810,142 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
                             }
                             Err(error_data) => {
                                 println!("❌ TOOLS: cluster_info failed: {}", error_data.message);
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": format!("Error: {}", error_data.message)
+                                    }],
+                                    "isError": true
+                                })
+                            }
+                        }
+                    }
+                    "shell_command" => {
+                        let command = args_map
+                            .get("command")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("echo 'No command provided'");
+                        let node = args_map.get("node").and_then(|v| v.as_str());
+                        let as_root = args_map
+                            .get("as_root")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let timeout = args_map
+                            .get("timeout")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(60);
+
+                        println!(
+                            "🔧 TOOLS: Executing shell_command: {} on node: {:?}",
+                            command, node
+                        );
+                        match service
+                            .handle_shell_command(command, node, as_root, timeout)
+                            .await
+                        {
+                            Ok(result) => {
+                                println!("✅ TOOLS: shell_command succeeded");
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Failed to serialize result".to_string())
+                                    }],
+                                    "isError": false
+                                })
+                            }
+                            Err(error_data) => {
+                                println!("❌ TOOLS: shell_command failed: {}", error_data.message);
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": format!("Error: {}", error_data.message)
+                                    }],
+                                    "isError": true
+                                })
+                            }
+                        }
+                    }
+                    "journald_logs" => {
+                        let node = args_map.get("node").and_then(|v| v.as_str());
+                        let service_name = args_map.get("service").and_then(|v| v.as_str());
+                        let since = args_map.get("since").and_then(|v| v.as_str());
+                        let lines = args_map
+                            .get("lines")
+                            .and_then(|v| v.as_u64())
+                            .map(|v| v as u32);
+                        let follow = args_map
+                            .get("follow")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let priority = args_map.get("priority").and_then(|v| v.as_str());
+
+                        println!(
+                            "📋 TOOLS: Executing journald_logs for node: {:?}, service: {:?}",
+                            node, service_name
+                        );
+                        match service
+                            .handle_journald_logs(
+                                node,
+                                service_name,
+                                since,
+                                lines,
+                                follow,
+                                priority,
+                            )
+                            .await
+                        {
+                            Ok(result) => {
+                                println!("✅ TOOLS: journald_logs succeeded");
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Failed to serialize result".to_string())
+                                    }],
+                                    "isError": false
+                                })
+                            }
+                            Err(error_data) => {
+                                println!("❌ TOOLS: journald_logs failed: {}", error_data.message);
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": format!("Error: {}", error_data.message)
+                                    }],
+                                    "isError": true
+                                })
+                            }
+                        }
+                    }
+                    "loki_logs" => {
+                        let query = args_map
+                            .get("query")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("{job=\"unknown\"}");
+                        let start = args_map.get("start").and_then(|v| v.as_str());
+                        let end = args_map.get("end").and_then(|v| v.as_str());
+                        let limit = args_map
+                            .get("limit")
+                            .and_then(|v| v.as_u64())
+                            .map(|v| v as u32);
+                        let direction = args_map.get("direction").and_then(|v| v.as_str());
+
+                        println!("🔍 TOOLS: Executing loki_logs with query: {}", query);
+                        match service
+                            .handle_loki_logs(query, start, end, limit, direction)
+                            .await
+                        {
+                            Ok(result) => {
+                                println!("✅ TOOLS: loki_logs succeeded");
+                                serde_json::json!({
+                                    "content": [{
+                                        "type": "text",
+                                        "text": serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Failed to serialize result".to_string())
+                                    }],
+                                    "isError": false
+                                })
+                            }
+                            Err(error_data) => {
+                                println!("❌ TOOLS: loki_logs failed: {}", error_data.message);
                                 serde_json::json!({
                                     "content": [{
                                         "type": "text",
@@ -1399,8 +1624,8 @@ mod tests {
         let json: Value = serde_json::from_str(&response).unwrap();
         assert_eq!(json["jsonrpc"], "2.0");
         assert_eq!(json["id"], 3);
-        // Should return 5 tools
-        assert_eq!(json["result"]["tools"].as_array().unwrap().len(), 5);
+        // Should return 8 tools
+        assert_eq!(json["result"]["tools"].as_array().unwrap().len(), 8);
 
         // Check first tool as example
         let first_tool = &json["result"]["tools"][0];

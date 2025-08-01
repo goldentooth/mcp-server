@@ -48,6 +48,35 @@ pub struct DiskUsage {
     pub mount_point: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CommandResult {
+    pub node: String,
+    pub command: String,
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JournaldLogResult {
+    pub node: String,
+    pub service: Option<String>,
+    pub timestamp: String,
+    pub priority: String,
+    pub message: String,
+    pub unit: Option<String>,
+    pub pid: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LokiLogResult {
+    pub timestamp: String,
+    pub log_line: String,
+    pub labels: std::collections::HashMap<String, String>,
+    pub stream: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ClusterOperationError {
     #[error("Command failed: {0}")]
@@ -56,6 +85,8 @@ pub enum ClusterOperationError {
     ParseError(String),
     #[error("Network error: {0}")]
     NetworkError(String),
+    #[error("Validation error: {0}")]
+    ValidationError(String),
 }
 
 /// Type alias to simplify complex return type for metrics parsing
@@ -99,6 +130,32 @@ pub trait ClusterOperations: Send + Sync {
         &self,
         node: Option<&str>,
     ) -> Result<HashMap<String, ResourceUsage>, ClusterOperationError>;
+    async fn execute_command(
+        &self,
+        command: &str,
+        node: Option<&str>,
+        as_root: bool,
+        timeout_seconds: u64,
+    ) -> Result<Vec<CommandResult>, ClusterOperationError>;
+
+    async fn get_journald_logs(
+        &self,
+        node: Option<&str>,
+        service: Option<&str>,
+        since: Option<&str>,
+        lines: Option<u32>,
+        follow: bool,
+        priority: Option<&str>,
+    ) -> Result<Vec<JournaldLogResult>, ClusterOperationError>;
+
+    async fn get_loki_logs(
+        &self,
+        query: &str,
+        start: Option<&str>,
+        end: Option<&str>,
+        limit: Option<u32>,
+        direction: Option<&str>,
+    ) -> Result<Vec<LokiLogResult>, ClusterOperationError>;
 }
 
 /// Default implementation of cluster operations
@@ -337,6 +394,361 @@ impl ClusterOperations for DefaultClusterOperations {
         }
 
         Ok(resource_map)
+    }
+
+    async fn execute_command(
+        &self,
+        command: &str,
+        node: Option<&str>,
+        as_root: bool,
+        timeout_seconds: u64,
+    ) -> Result<Vec<CommandResult>, ClusterOperationError> {
+        use std::process::Stdio;
+        use tokio::process::Command;
+        use tokio::time::timeout;
+
+        // Security validation - basic command sanitization
+        if command.contains("rm -rf /") || command.contains(":(){ :|:& };:") {
+            return Err(ClusterOperationError::CommandFailed(
+                "Dangerous command blocked".to_string(),
+            ));
+        }
+
+        // Determine target nodes
+        let target_nodes = if let Some(specific_node) = node {
+            // Validate node exists
+            if !NODE_IPS.contains_key(specific_node) {
+                return Err(ClusterOperationError::NetworkError(format!(
+                    "Unknown node: {}",
+                    specific_node
+                )));
+            }
+            specific_node.to_string()
+        } else {
+            // Default to a random node (allyrion for consistency)
+            "allyrion".to_string()
+        };
+
+        // Set up goldentooth command
+        let goldentooth_cmd = if as_root {
+            format!("goldentooth command_root {} '{}'", target_nodes, command)
+        } else {
+            format!("goldentooth command {} '{}'", target_nodes, command)
+        };
+
+        // Execute command with timeout
+        let mut cmd = Command::new("bash");
+        cmd.arg("-c")
+            .arg(&goldentooth_cmd)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let child = cmd.spawn().map_err(|e| {
+            ClusterOperationError::CommandFailed(format!("Failed to spawn command: {}", e))
+        })?;
+
+        let output = timeout(
+            std::time::Duration::from_secs(timeout_seconds),
+            child.wait_with_output(),
+        )
+        .await
+        .map_err(|_| {
+            ClusterOperationError::CommandFailed(format!(
+                "Command timed out after {} seconds",
+                timeout_seconds
+            ))
+        })?
+        .map_err(|e| {
+            ClusterOperationError::CommandFailed(format!("Command execution failed: {}", e))
+        })?;
+
+        // Parse the ansible-playbook output to extract actual command results
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // Parse ansible output for actual command results
+        // This is a simplified parser - in practice, we'd want more sophisticated parsing
+        let mut results = Vec::new();
+
+        if stdout.contains("TASK [Execute command]") {
+            // Success case - extract the actual command output
+            let success = output.status.success();
+            let exit_code = output.status.code().unwrap_or(-1);
+
+            results.push(CommandResult {
+                node: target_nodes,
+                command: command.to_string(),
+                exit_code,
+                stdout: stdout.to_string(),
+                stderr: stderr.to_string(),
+                success,
+            });
+        } else {
+            // Error case - likely ansible failure
+            results.push(CommandResult {
+                node: target_nodes,
+                command: command.to_string(),
+                exit_code: output.status.code().unwrap_or(-1),
+                stdout: stdout.to_string(),
+                stderr: stderr.to_string(),
+                success: false,
+            });
+        }
+
+        Ok(results)
+    }
+
+    async fn get_journald_logs(
+        &self,
+        node: Option<&str>,
+        service: Option<&str>,
+        since: Option<&str>,
+        lines: Option<u32>,
+        follow: bool,
+        priority: Option<&str>,
+    ) -> Result<Vec<JournaldLogResult>, ClusterOperationError> {
+        // Build the journalctl command
+        let mut journalctl_cmd = vec!["journalctl", "--no-pager", "--output=json-pretty"];
+
+        // Add service filter if specified
+        if let Some(svc) = service {
+            journalctl_cmd.push("--unit");
+            journalctl_cmd.push(svc);
+        }
+
+        // Add since filter if specified
+        if let Some(since_time) = since {
+            journalctl_cmd.push("--since");
+            journalctl_cmd.push(since_time);
+        }
+
+        // Add lines limit if specified
+        let line_count_str = lines.map(|c| c.to_string());
+        if let Some(ref line_count) = line_count_str {
+            journalctl_cmd.push("--lines");
+            journalctl_cmd.push(line_count);
+        }
+
+        // Add priority filter if specified
+        if let Some(prio) = priority {
+            journalctl_cmd.push("--priority");
+            journalctl_cmd.push(prio);
+        }
+
+        // Don't add --follow for MCP usage - we want finite results
+        if follow {
+            return Err(ClusterOperationError::ValidationError(
+                "Follow mode not supported in MCP context".to_string(),
+            ));
+        }
+
+        let command_str = journalctl_cmd.join(" ");
+
+        // Execute the journalctl command on specified nodes
+        let command_results = self.execute_command(&command_str, node, false, 30).await?;
+
+        let mut all_logs = Vec::new();
+
+        for cmd_result in command_results {
+            if !cmd_result.success {
+                return Err(ClusterOperationError::CommandFailed(format!(
+                    "journalctl failed on {}: {}",
+                    cmd_result.node, cmd_result.stderr
+                )));
+            }
+
+            // Parse JSON output from journalctl
+            for line in cmd_result.stdout.lines() {
+                let line = line.trim();
+                if line.is_empty() || !line.starts_with('{') {
+                    continue;
+                }
+
+                match serde_json::from_str::<serde_json::Value>(line) {
+                    Ok(log_entry) => {
+                        let timestamp = log_entry["__REALTIME_TIMESTAMP"].as_str().unwrap_or("0");
+
+                        // Convert microsecond timestamp to human readable
+                        let timestamp_readable =
+                            if let Ok(ts_microseconds) = timestamp.parse::<u64>() {
+                                let ts_seconds = ts_microseconds / 1_000_000;
+                                chrono::DateTime::from_timestamp(ts_seconds as i64, 0)
+                                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                                    .unwrap_or_else(|| timestamp.to_string())
+                            } else {
+                                timestamp.to_string()
+                            };
+
+                        let priority_num = log_entry["PRIORITY"].as_str().unwrap_or("6");
+
+                        let priority_name = match priority_num {
+                            "0" => "emerg",
+                            "1" => "alert",
+                            "2" => "crit",
+                            "3" => "err",
+                            "4" => "warning",
+                            "5" => "notice",
+                            "6" => "info",
+                            "7" => "debug",
+                            _ => priority_num,
+                        };
+
+                        let log_result = JournaldLogResult {
+                            node: cmd_result.node.clone(),
+                            service: log_entry["_SYSTEMD_UNIT"].as_str().map(|s| s.to_string()),
+                            timestamp: timestamp_readable,
+                            priority: priority_name.to_string(),
+                            message: log_entry["MESSAGE"]
+                                .as_str()
+                                .unwrap_or("(no message)")
+                                .to_string(),
+                            unit: log_entry["_SYSTEMD_UNIT"].as_str().map(|s| s.to_string()),
+                            pid: log_entry["_PID"].as_str().and_then(|s| s.parse().ok()),
+                        };
+
+                        all_logs.push(log_result);
+                    }
+                    Err(_) => {
+                        // Skip malformed JSON lines
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Sort logs by timestamp (most recent first)
+        all_logs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+        Ok(all_logs)
+    }
+
+    async fn get_loki_logs(
+        &self,
+        query: &str,
+        start: Option<&str>,
+        end: Option<&str>,
+        limit: Option<u32>,
+        direction: Option<&str>,
+    ) -> Result<Vec<LokiLogResult>, ClusterOperationError> {
+        // Build the LogQL query URL
+        let loki_url = "http://loki.services.goldentooth.net:3100";
+        let mut query_params = vec![("query", query.to_string())];
+
+        // Add optional parameters
+        if let Some(start_time) = start {
+            query_params.push(("start", start_time.to_string()));
+        }
+        if let Some(end_time) = end {
+            query_params.push(("end", end_time.to_string()));
+        }
+        if let Some(limit_val) = limit {
+            query_params.push(("limit", limit_val.to_string()));
+        }
+        if let Some(dir) = direction {
+            query_params.push(("direction", dir.to_string()));
+        }
+
+        // Build query string
+        let query_string = query_params
+            .iter()
+            .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+
+        let full_url = format!("{}/loki/api/v1/query_range?{}", loki_url, query_string);
+
+        // Make HTTP request to Loki
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| {
+                ClusterOperationError::NetworkError(format!("HTTP client error: {}", e))
+            })?;
+
+        let response = client.get(&full_url).send().await.map_err(|e| {
+            ClusterOperationError::NetworkError(format!("Loki request failed: {}", e))
+        })?;
+
+        if !response.status().is_success() {
+            return Err(ClusterOperationError::NetworkError(format!(
+                "Loki returned status {}: {}",
+                response.status(),
+                response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Unknown error".to_string())
+            )));
+        }
+
+        let response_text = response.text().await.map_err(|e| {
+            ClusterOperationError::NetworkError(format!("Failed to read Loki response: {}", e))
+        })?;
+
+        // Parse Loki response JSON
+        let loki_response: serde_json::Value =
+            serde_json::from_str(&response_text).map_err(|e| {
+                ClusterOperationError::ParseError(format!("Failed to parse Loki JSON: {}", e))
+            })?;
+
+        let mut results = Vec::new();
+
+        // Parse Loki response structure
+        if let Some(data) = loki_response.get("data") {
+            if let Some(result_array) = data.get("result").and_then(|r| r.as_array()) {
+                for stream in result_array {
+                    // Extract stream labels
+                    let labels = if let Some(stream_obj) =
+                        stream.get("stream").and_then(|s| s.as_object())
+                    {
+                        stream_obj
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                            .collect()
+                    } else {
+                        std::collections::HashMap::new()
+                    };
+
+                    let stream_id = format!("{:?}", labels);
+
+                    // Extract log entries
+                    if let Some(values) = stream.get("values").and_then(|v| v.as_array()) {
+                        for value in values {
+                            if let Some(entry) = value.as_array() {
+                                if entry.len() >= 2 {
+                                    let timestamp_ns = entry[0].as_str().unwrap_or("0");
+                                    let log_line = entry[1].as_str().unwrap_or("").to_string();
+
+                                    // Convert nanosecond timestamp to human readable
+                                    let timestamp_readable =
+                                        if let Ok(ts_nanos) = timestamp_ns.parse::<u64>() {
+                                            let ts_seconds = ts_nanos / 1_000_000_000;
+                                            chrono::DateTime::from_timestamp(ts_seconds as i64, 0)
+                                                .map(|dt| {
+                                                    dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+                                                })
+                                                .unwrap_or_else(|| timestamp_ns.to_string())
+                                        } else {
+                                            timestamp_ns.to_string()
+                                        };
+
+                                    results.push(LokiLogResult {
+                                        timestamp: timestamp_readable,
+                                        log_line,
+                                        labels: labels.clone(),
+                                        stream: stream_id.clone(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort by timestamp (most recent first)
+        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+        Ok(results)
     }
 }
 
@@ -717,6 +1129,146 @@ impl ClusterOperations for MockClusterOperations {
             },
         );
         Ok(result)
+    }
+
+    async fn execute_command(
+        &self,
+        command: &str,
+        node: Option<&str>,
+        _as_root: bool,
+        _timeout_seconds: u64,
+    ) -> Result<Vec<CommandResult>, ClusterOperationError> {
+        let target_node = node.unwrap_or("allyrion").to_string();
+
+        Ok(vec![CommandResult {
+            node: target_node,
+            command: command.to_string(),
+            exit_code: 0,
+            stdout: format!("Mock output for command: {}", command),
+            stderr: String::new(),
+            success: true,
+        }])
+    }
+
+    async fn get_journald_logs(
+        &self,
+        node: Option<&str>,
+        service: Option<&str>,
+        _since: Option<&str>,
+        lines: Option<u32>,
+        follow: bool,
+        _priority: Option<&str>,
+    ) -> Result<Vec<JournaldLogResult>, ClusterOperationError> {
+        let node_name = node.unwrap_or("allyrion").to_string();
+
+        if follow {
+            return Err(ClusterOperationError::ValidationError(
+                "Follow mode not supported in MCP context".to_string(),
+            ));
+        }
+
+        // Return mock journald log entries
+        let mock_logs = vec![
+            JournaldLogResult {
+                node: node_name.clone(),
+                service: service
+                    .map(|s| s.to_string())
+                    .or_else(|| Some("ssh.service".to_string())),
+                timestamp: "2024-01-15 10:30:45 UTC".to_string(),
+                priority: "info".to_string(),
+                message: "Started OpenSSH Daemon.".to_string(),
+                unit: Some("ssh.service".to_string()),
+                pid: Some(1234),
+            },
+            JournaldLogResult {
+                node: node_name.clone(),
+                service: service
+                    .map(|s| s.to_string())
+                    .or_else(|| Some("consul.service".to_string())),
+                timestamp: "2024-01-15 10:29:12 UTC".to_string(),
+                priority: "info".to_string(),
+                message: "Consul agent started successfully".to_string(),
+                unit: Some("consul.service".to_string()),
+                pid: Some(5678),
+            },
+            JournaldLogResult {
+                node: node_name,
+                service: service
+                    .map(|s| s.to_string())
+                    .or_else(|| Some("systemd".to_string())),
+                timestamp: "2024-01-15 10:28:01 UTC".to_string(),
+                priority: "notice".to_string(),
+                message: "System startup completed".to_string(),
+                unit: None,
+                pid: Some(1),
+            },
+        ];
+
+        let filtered_logs: Vec<_> = mock_logs
+            .into_iter()
+            .take(lines.unwrap_or(100) as usize)
+            .collect();
+
+        Ok(filtered_logs)
+    }
+
+    async fn get_loki_logs(
+        &self,
+        query: &str,
+        _start: Option<&str>,
+        _end: Option<&str>,
+        limit: Option<u32>,
+        _direction: Option<&str>,
+    ) -> Result<Vec<LokiLogResult>, ClusterOperationError> {
+        // Return mock Loki log entries
+        let mut labels1 = std::collections::HashMap::new();
+        labels1.insert("job".to_string(), "consul".to_string());
+        labels1.insert("instance".to_string(), "allyrion:8500".to_string());
+        labels1.insert("level".to_string(), "INFO".to_string());
+
+        let mut labels2 = std::collections::HashMap::new();
+        labels2.insert("job".to_string(), "nomad".to_string());
+        labels2.insert("instance".to_string(), "jast:4646".to_string());
+        labels2.insert("level".to_string(), "WARN".to_string());
+
+        let mut labels3 = std::collections::HashMap::new();
+        labels3.insert("job".to_string(), "vault".to_string());
+        labels3.insert("instance".to_string(), "karstark:8200".to_string());
+        labels3.insert("level".to_string(), "INFO".to_string());
+
+        let mock_logs = vec![
+            LokiLogResult {
+                timestamp: "2024-01-15 10:30:45 UTC".to_string(),
+                log_line: format!("Mock Loki log for query: {}", query),
+                labels: labels1.clone(),
+                stream: format!("{:?}", labels1),
+            },
+            LokiLogResult {
+                timestamp: "2024-01-15 10:29:12 UTC".to_string(),
+                log_line: "Consul cluster member joined: allyrion".to_string(),
+                labels: labels1.clone(),
+                stream: format!("{:?}", labels1),
+            },
+            LokiLogResult {
+                timestamp: "2024-01-15 10:28:58 UTC".to_string(),
+                log_line: "Nomad server started successfully".to_string(),
+                labels: labels2.clone(),
+                stream: format!("{:?}", labels2),
+            },
+            LokiLogResult {
+                timestamp: "2024-01-15 10:28:01 UTC".to_string(),
+                log_line: "Vault unsealed successfully".to_string(),
+                labels: labels3.clone(),
+                stream: format!("{:?}", labels3),
+            },
+        ];
+
+        let filtered_logs: Vec<_> = mock_logs
+            .into_iter()
+            .take(limit.unwrap_or(100) as usize)
+            .collect();
+
+        Ok(filtered_logs)
     }
 }
 
