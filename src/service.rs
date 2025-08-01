@@ -11,10 +11,11 @@ use rmcp::{
 };
 use serde_json::{Value, json};
 use std::future::Future;
+use std::sync::Arc;
 
 pub struct GoldentoothService {
     auth_service: Option<AuthService>,
-    cluster_ops: Box<dyn ClusterOperations + Send + Sync>,
+    cluster_ops: Arc<dyn ClusterOperations + Send + Sync>,
 }
 
 impl std::fmt::Debug for GoldentoothService {
@@ -27,15 +28,10 @@ impl std::fmt::Debug for GoldentoothService {
 
 impl Clone for GoldentoothService {
     fn clone(&self) -> Self {
-        // For testing, we'll create a new instance with same config
-        // In production, this would need proper cloning of cluster_ops
-        if let Some(auth_service) = &self.auth_service {
-            GoldentoothService {
-                auth_service: Some(auth_service.clone()),
-                cluster_ops: Box::new(DefaultClusterOperations::new(SystemCommandExecutor::new())),
-            }
-        } else {
-            GoldentoothService::new()
+        // Now properly clones cluster_ops using Arc
+        GoldentoothService {
+            auth_service: self.auth_service.clone(),
+            cluster_ops: Arc::clone(&self.cluster_ops),
         }
     }
 }
@@ -71,7 +67,7 @@ impl GoldentoothService {
         };
 
         let executor = SystemCommandExecutor::new();
-        let cluster_ops = Box::new(DefaultClusterOperations::new(executor));
+        let cluster_ops = Arc::new(DefaultClusterOperations::new(executor));
 
         GoldentoothService {
             auth_service,
@@ -79,7 +75,7 @@ impl GoldentoothService {
         }
     }
 
-    pub fn with_cluster_operations(cluster_ops: Box<dyn ClusterOperations + Send + Sync>) -> Self {
+    pub fn with_cluster_operations(cluster_ops: Arc<dyn ClusterOperations + Send + Sync>) -> Self {
         let auth_config = AuthConfig::default();
         let auth_service = if AuthService::new(auth_config.clone()).requires_auth() {
             Some(AuthService::new(auth_config))
@@ -99,7 +95,7 @@ impl GoldentoothService {
         auth_service.initialize().await?;
 
         let executor = SystemCommandExecutor::new();
-        let cluster_ops = Box::new(DefaultClusterOperations::new(executor));
+        let cluster_ops = Arc::new(DefaultClusterOperations::new(executor));
 
         let service = GoldentoothService {
             auth_service: Some(auth_service.clone()),

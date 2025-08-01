@@ -1712,7 +1712,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_tools_call_cluster_info() {
-        let service = GoldentoothService::new();
+        // Use fully mock cluster operations to avoid any real network calls
+        use crate::cluster::MockClusterOperations;
+        use std::sync::Arc;
+
+        let cluster_ops = Arc::new(MockClusterOperations);
+        let service = GoldentoothService::with_cluster_operations(cluster_ops);
         let server = HttpServer::new(service, None);
 
         let request = r#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"cluster_info","arguments":{}},"id":5}"#;
