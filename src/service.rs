@@ -276,6 +276,87 @@ impl GoldentoothService {
         }
     }
 
+    #[allow(dead_code)]
+    pub async fn handle_shell_command(
+        &self,
+        command: &str,
+        node: Option<&str>,
+        as_root: bool,
+        timeout_seconds: u64,
+    ) -> Result<Value, ErrorData> {
+        match self
+            .cluster_ops
+            .execute_command(command, node, as_root, timeout_seconds)
+            .await
+        {
+            Ok(results) => Ok(json!({
+                "success": true,
+                "results": results,
+                "tool": "shell_command"
+            })),
+            Err(error) => Ok(json!({
+                "success": false,
+                "error": error.to_string(),
+                "tool": "shell_command"
+            })),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub async fn handle_journald_logs(
+        &self,
+        node: Option<&str>,
+        service: Option<&str>,
+        since: Option<&str>,
+        lines: Option<u32>,
+        follow: bool,
+        priority: Option<&str>,
+    ) -> Result<Value, ErrorData> {
+        match self
+            .cluster_ops
+            .get_journald_logs(node, service, since, lines, follow, priority)
+            .await
+        {
+            Ok(logs) => Ok(json!({
+                "success": true,
+                "logs": logs,
+                "tool": "journald_logs"
+            })),
+            Err(error) => Ok(json!({
+                "success": false,
+                "error": error.to_string(),
+                "tool": "journald_logs"
+            })),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub async fn handle_loki_logs(
+        &self,
+        query: &str,
+        start: Option<&str>,
+        end: Option<&str>,
+        limit: Option<u32>,
+        direction: Option<&str>,
+    ) -> Result<Value, ErrorData> {
+        match self
+            .cluster_ops
+            .get_loki_logs(query, start, end, limit, direction)
+            .await
+        {
+            Ok(logs) => Ok(json!({
+                "success": true,
+                "logs": logs,
+                "tool": "loki_logs"
+            })),
+            Err(error) => Ok(json!({
+                "success": false,
+                "error": error.to_string(),
+                "tool": "loki_logs"
+            })),
+        }
+    }
+
     fn extract_auth_header(&self, _context: &RequestContext<RoleServer>) -> Option<String> {
         // TODO: Extract authorization header from MCP request context
         // This is a placeholder implementation until rmcp provides access to request metadata
@@ -524,6 +605,222 @@ impl Service<RoleServer> for GoldentoothService {
                                 Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
                             }
                         },
+                        "shell_command" => {
+                            let command = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("command"))
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| ErrorData {
+                                    code: ErrorCode(-32602), // Invalid params
+                                    message: "Missing required parameter: command".into(),
+                                    data: None,
+                                })?;
+
+                            let node = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("node"))
+                                .and_then(|v| v.as_str());
+
+                            let as_root = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("as_root"))
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+
+                            let timeout_seconds = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("timeout"))
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(60);
+
+                            match self
+                                .handle_shell_command(command, node, as_root, timeout_seconds)
+                                .await
+                            {
+                                Ok(result) => {
+                                    let content = rmcp::model::Content::text(
+                                        serde_json::to_string_pretty(&result).unwrap_or_else(
+                                            |_| "Failed to serialize result".to_string(),
+                                        ),
+                                    );
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::success(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                                Err(error_data) => {
+                                    eprintln!(
+                                        "Shell command failed with error {}: {}",
+                                        error_data.code.0, error_data.message
+                                    );
+                                    let detailed_message = format!(
+                                        "Failed to execute shell command - Error {}: {} {}",
+                                        error_data.code.0,
+                                        error_data.message,
+                                        error_data
+                                            .data
+                                            .as_ref()
+                                            .map(|d| format!(
+                                                "(Details: {})",
+                                                serde_json::to_string(d).unwrap_or_else(|_| {
+                                                    "<serialization error>".to_string()
+                                                })
+                                            ))
+                                            .unwrap_or_else(|| "".to_string())
+                                    );
+                                    let content = rmcp::model::Content::text(detailed_message);
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::error(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                            }
+                        }
+                        "journald_logs" => {
+                            let node = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("node"))
+                                .and_then(|v| v.as_str());
+
+                            let service = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("service"))
+                                .and_then(|v| v.as_str());
+
+                            let since = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("since"))
+                                .and_then(|v| v.as_str());
+
+                            let lines = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("lines"))
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32);
+
+                            let follow = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("follow"))
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+
+                            let priority = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("priority"))
+                                .and_then(|v| v.as_str());
+
+                            match self
+                                .handle_journald_logs(node, service, since, lines, follow, priority)
+                                .await
+                            {
+                                Ok(result) => {
+                                    let content = rmcp::model::Content::text(
+                                        serde_json::to_string_pretty(&result).unwrap_or_else(
+                                            |_| "Failed to serialize result".to_string(),
+                                        ),
+                                    );
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::success(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                                Err(error_data) => {
+                                    eprintln!(
+                                        "Journald logs failed with error {}: {}",
+                                        error_data.code.0, error_data.message
+                                    );
+                                    let detailed_message = format!(
+                                        "Failed to get journald logs - Error {}: {} {}",
+                                        error_data.code.0,
+                                        error_data.message,
+                                        error_data
+                                            .data
+                                            .as_ref()
+                                            .map(|d| format!(
+                                                "(Details: {})",
+                                                serde_json::to_string(d).unwrap_or_else(|_| {
+                                                    "<serialization error>".to_string()
+                                                })
+                                            ))
+                                            .unwrap_or_else(|| "".to_string())
+                                    );
+                                    let content = rmcp::model::Content::text(detailed_message);
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::error(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                            }
+                        }
+                        "loki_logs" => {
+                            let query = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("query"))
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| ErrorData {
+                                    code: ErrorCode(-32602), // Invalid params
+                                    message: "Missing required parameter: query".into(),
+                                    data: None,
+                                })?;
+
+                            let start = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("start"))
+                                .and_then(|v| v.as_str());
+
+                            let end = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("end"))
+                                .and_then(|v| v.as_str());
+
+                            let limit = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("limit"))
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32);
+
+                            let direction = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("direction"))
+                                .and_then(|v| v.as_str());
+
+                            match self
+                                .handle_loki_logs(query, start, end, limit, direction)
+                                .await
+                            {
+                                Ok(result) => {
+                                    let content = rmcp::model::Content::text(
+                                        serde_json::to_string_pretty(&result).unwrap_or_else(
+                                            |_| "Failed to serialize result".to_string(),
+                                        ),
+                                    );
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::success(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                                Err(error_data) => {
+                                    eprintln!(
+                                        "Loki logs failed with error {}: {}",
+                                        error_data.code.0, error_data.message
+                                    );
+                                    let detailed_message = format!(
+                                        "Failed to get Loki logs - Error {}: {} {}",
+                                        error_data.code.0,
+                                        error_data.message,
+                                        error_data
+                                            .data
+                                            .as_ref()
+                                            .map(|d| format!(
+                                                "(Details: {})",
+                                                serde_json::to_string(d).unwrap_or_else(|_| {
+                                                    "<serialization error>".to_string()
+                                                })
+                                            ))
+                                            .unwrap_or_else(|| "".to_string())
+                                    );
+                                    let content = rmcp::model::Content::text(detailed_message);
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::error(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                            }
+                        }
                         _ => {
                             Err(ErrorData {
                                 code: ErrorCode(-32601), // Method not found
