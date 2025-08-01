@@ -59,6 +59,9 @@ pub enum ClusterOperationError {
     NetworkError(String),
 }
 
+/// Type alias for node_exporter metrics parsing result
+type MetricsParseResult = (Option<String>, Option<(f32, f32, f32)>);
+
 lazy_static! {
     /// Static mapping of node names to IP addresses
     /// Based on the Ansible inventory host_vars
@@ -153,6 +156,74 @@ impl<E: CommandExecutor> DefaultClusterOperations<E> {
             load_average: None,
         })
     }
+
+    /// Parse node_exporter Prometheus metrics to extract uptime and load average
+    fn parse_node_exporter_metrics(
+        &self,
+        metrics_text: &str,
+    ) -> Result<MetricsParseResult, ClusterOperationError> {
+        let mut uptime_seconds: Option<f64> = None;
+        let mut load1: Option<f32> = None;
+        let mut load5: Option<f32> = None;
+        let mut load15: Option<f32> = None;
+
+        for line in metrics_text.lines() {
+            // Skip comments and empty lines
+            if line.starts_with('#') || line.trim().is_empty() {
+                continue;
+            }
+
+            // Parse uptime: node_boot_time_seconds or node_time_seconds - node_boot_time_seconds
+            if line.starts_with("node_boot_time_seconds ") {
+                if let Some(value_str) = line.split_whitespace().nth(1) {
+                    if let Ok(boot_time) = value_str.parse::<f64>() {
+                        let current_time = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs_f64();
+                        uptime_seconds = Some(current_time - boot_time);
+                    }
+                }
+            }
+            // Parse load averages
+            else if line.starts_with("node_load1 ") {
+                if let Some(value_str) = line.split_whitespace().nth(1) {
+                    load1 = value_str.parse().ok();
+                }
+            } else if line.starts_with("node_load5 ") {
+                if let Some(value_str) = line.split_whitespace().nth(1) {
+                    load5 = value_str.parse().ok();
+                }
+            } else if line.starts_with("node_load15 ") {
+                if let Some(value_str) = line.split_whitespace().nth(1) {
+                    load15 = value_str.parse().ok();
+                }
+            }
+        }
+
+        // Convert uptime seconds to human-readable string
+        let uptime = uptime_seconds.map(|seconds| {
+            let days = (seconds / 86400.0) as u64;
+            let hours = ((seconds % 86400.0) / 3600.0) as u64;
+            let minutes = ((seconds % 3600.0) / 60.0) as u64;
+
+            if days > 0 {
+                format!("{} days, {}:{:02}", days, hours, minutes)
+            } else if hours > 0 {
+                format!("{}:{:02}", hours, minutes)
+            } else {
+                format!("{} minutes", minutes)
+            }
+        });
+
+        // Combine load averages
+        let load_average = match (load1, load5, load15) {
+            (Some(l1), Some(l5), Some(l15)) => Some((l1, l5, l15)),
+            _ => None,
+        };
+
+        Ok((uptime, load_average))
+    }
 }
 
 #[async_trait]
@@ -172,64 +243,48 @@ impl<E: CommandExecutor + Send + Sync> ClusterOperations for DefaultClusterOpera
     }
 
     async fn get_node_status(&self, node: &str) -> Result<NodeStatus, ClusterOperationError> {
-        let output = self
-            .executor
-            .execute("goldentooth", &["uptime", node])
-            .await
-            .map_err(ClusterOperationError::CommandFailed)?;
+        // Get the node's IP address from our static mapping
+        let ip_str = NODE_IPS.get(node).ok_or_else(|| {
+            ClusterOperationError::NetworkError(format!("Unknown node: {}", node))
+        })?;
 
-        // Parse uptime output
-        // Format: "allyrion: 10:23:45 up 5 days, 3:15, 2 users, load average: 0.15, 0.20, 0.18"
-        for line in output.lines() {
-            if line.starts_with(&format!("{}: ", node)) {
-                // Extract uptime - look for the part after "up " until the next comma
-                let uptime = if let Some(up_index) = line.find(" up ") {
-                    let after_up = &line[up_index + 4..];
-                    // Find the next comma after "users"
-                    if let Some(users_index) = after_up.find(" users") {
-                        if let Some(comma_before_users) = after_up[..users_index].rfind(", ") {
-                            Some(after_up[..comma_before_users].to_string())
-                        } else {
-                            Some(after_up[..users_index].trim().to_string())
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
+        // Create HTTP client with timeout
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|e| {
+                ClusterOperationError::NetworkError(format!("HTTP client error: {}", e))
+            })?;
 
-                // Extract load average
-                let load_average = if let Some(la_index) = line.find("load average: ") {
-                    let load_str = &line[la_index + 14..];
-                    let loads: Vec<f32> = load_str
-                        .split(", ")
-                        .filter_map(|n| n.trim().parse().ok())
-                        .collect();
-                    if loads.len() == 3 {
-                        Some((loads[0], loads[1], loads[2]))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
+        // Node exporter URL (typically runs on port 9100)
+        let url = format!("http://{}:9100/metrics", ip_str);
 
-                return Ok(NodeStatus {
-                    name: node.to_string(),
-                    is_online: true,
-                    uptime,
-                    load_average,
-                });
-            }
+        // Scrape metrics from node_exporter
+        let response = client.get(&url).send().await.map_err(|e| {
+            ClusterOperationError::NetworkError(format!("Failed to scrape node {}: {}", node, e))
+        })?;
+
+        if !response.status().is_success() {
+            return Ok(NodeStatus {
+                name: node.to_string(),
+                is_online: false,
+                uptime: None,
+                load_average: None,
+            });
         }
 
-        // If no matching line found, assume node is offline
+        let metrics_text = response.text().await.map_err(|e| {
+            ClusterOperationError::NetworkError(format!("Failed to read metrics: {}", e))
+        })?;
+
+        // Parse Prometheus metrics
+        let (uptime, load_average) = self.parse_node_exporter_metrics(&metrics_text)?;
+
         Ok(NodeStatus {
             name: node.to_string(),
-            is_online: false,
-            uptime: None,
-            load_average: None,
+            is_online: true,
+            uptime,
+            load_average,
         })
     }
 
@@ -490,5 +545,102 @@ mod tests {
         let node_names: Vec<String> = nodes.iter().map(|n| n.name.clone()).collect();
         assert!(node_names.contains(&"allyrion".to_string()));
         assert!(node_names.contains(&"velaryon".to_string()));
+    }
+
+    #[test]
+    fn test_parse_node_exporter_metrics() {
+        let executor = MockCommandExecutor::new();
+        let cluster_ops = DefaultClusterOperations::new(executor);
+
+        let sample_metrics = r#"
+# HELP node_boot_time_seconds Node boot time, in unixtime.
+# TYPE node_boot_time_seconds gauge
+node_boot_time_seconds 1.722369600e+09
+# HELP node_load1 1m load average.
+# TYPE node_load1 gauge
+node_load1 0.1
+# HELP node_load5 5m load average.
+# TYPE node_load5 gauge
+node_load5 0.15
+# HELP node_load15 15m load average.
+# TYPE node_load15 gauge
+node_load15 0.2
+# Some other metrics
+node_memory_MemTotal_bytes 8.0e+09
+"#;
+
+        let result = cluster_ops.parse_node_exporter_metrics(sample_metrics);
+        assert!(result.is_ok());
+
+        let (uptime, load_average) = result.unwrap();
+
+        // Should have uptime (calculated from boot time)
+        assert!(uptime.is_some());
+        let uptime_str = uptime.unwrap();
+        assert!(
+            uptime_str.contains("days")
+                || uptime_str.contains("minutes")
+                || uptime_str.contains(":")
+        );
+
+        // Should have load averages
+        assert!(load_average.is_some());
+        let (load1, load5, load15) = load_average.unwrap();
+        assert_eq!(load1, 0.1);
+        assert_eq!(load5, 0.15);
+        assert_eq!(load15, 0.2);
+    }
+
+    #[test]
+    fn test_parse_node_exporter_metrics_partial() {
+        let executor = MockCommandExecutor::new();
+        let cluster_ops = DefaultClusterOperations::new(executor);
+
+        // Test with only some metrics present
+        let partial_metrics = r#"
+node_load1 0.5
+node_load5 0.7
+# Missing load15 and boot_time
+"#;
+
+        let result = cluster_ops.parse_node_exporter_metrics(partial_metrics);
+        assert!(result.is_ok());
+
+        let (uptime, load_average) = result.unwrap();
+
+        // Should not have uptime (no boot time)
+        assert!(uptime.is_none());
+
+        // Should not have complete load averages (missing load15)
+        assert!(load_average.is_none());
+    }
+
+    #[test]
+    fn test_parse_node_exporter_metrics_empty() {
+        let executor = MockCommandExecutor::new();
+        let cluster_ops = DefaultClusterOperations::new(executor);
+
+        let result = cluster_ops.parse_node_exporter_metrics("");
+        assert!(result.is_ok());
+
+        let (uptime, load_average) = result.unwrap();
+        assert!(uptime.is_none());
+        assert!(load_average.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_node_status_unknown_node() {
+        let executor = MockCommandExecutor::new();
+        let cluster_ops = DefaultClusterOperations::new(executor);
+
+        let result = cluster_ops.get_node_status("nonexistent").await;
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            ClusterOperationError::NetworkError(msg) => {
+                assert!(msg.contains("Unknown node"));
+            }
+            _ => panic!("Expected NetworkError for unknown node"),
+        }
     }
 }
