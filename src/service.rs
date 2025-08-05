@@ -1,5 +1,6 @@
 use crate::auth::{AuthConfig, AuthError, AuthService};
 use crate::cluster::{ClusterOperations, DefaultClusterOperations};
+use crate::vectors::{ClusterDataType, VectorService};
 use rmcp::{
     RoleServer, Service,
     model::{
@@ -15,12 +16,14 @@ use std::sync::Arc;
 pub struct GoldentoothService {
     auth_service: Option<AuthService>,
     cluster_ops: Arc<dyn ClusterOperations + Send + Sync>,
+    vector_service: Option<VectorService>,
 }
 
 impl std::fmt::Debug for GoldentoothService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GoldentoothService")
             .field("auth_service", &self.auth_service.is_some())
+            .field("vector_service", &self.vector_service.is_some())
             .finish()
     }
 }
@@ -31,6 +34,7 @@ impl Clone for GoldentoothService {
         GoldentoothService {
             auth_service: self.auth_service.clone(),
             cluster_ops: Arc::clone(&self.cluster_ops),
+            vector_service: self.vector_service.clone(),
         }
     }
 }
@@ -70,6 +74,7 @@ impl GoldentoothService {
         GoldentoothService {
             auth_service,
             cluster_ops,
+            vector_service: None,
         }
     }
 
@@ -84,6 +89,7 @@ impl GoldentoothService {
         GoldentoothService {
             auth_service,
             cluster_ops,
+            vector_service: None,
         }
     }
 
@@ -97,6 +103,7 @@ impl GoldentoothService {
         let service = GoldentoothService {
             auth_service: Some(auth_service.clone()),
             cluster_ops,
+            vector_service: None,
         };
 
         Ok((service, auth_service))
@@ -104,6 +111,21 @@ impl GoldentoothService {
 
     pub fn is_auth_enabled(&self) -> bool {
         self.auth_service.is_some()
+    }
+
+    /// Initialize vector service with S3 configuration
+    pub async fn with_vectors(
+        mut self,
+        bucket_name: String,
+        index_name: String,
+    ) -> Result<Self, crate::vectors::VectorError> {
+        let vector_service = VectorService::new(bucket_name, index_name).await?;
+        self.vector_service = Some(vector_service);
+        Ok(self)
+    }
+
+    pub fn is_vectors_enabled(&self) -> bool {
+        self.vector_service.is_some()
     }
 
     async fn validate_request_auth(
@@ -370,6 +392,72 @@ impl GoldentoothService {
         // Fallback: check environment variable for testing purposes
         // This allows testing authentication without full HTTP integration
         std::env::var("AUTHORIZATION").ok()
+    }
+
+    #[allow(dead_code)]
+    pub async fn handle_vector_search(
+        &self,
+        query: &str,
+        limit: Option<u32>,
+        metadata_filters: Option<std::collections::HashMap<String, String>>,
+    ) -> Result<Value, ErrorData> {
+        if let Some(vector_service) = &self.vector_service {
+            match vector_service
+                .search_knowledge(query, limit, metadata_filters)
+                .await
+            {
+                Ok(result) => Ok(result),
+                Err(error) => Ok(json!({
+                    "success": false,
+                    "error": error.to_string(),
+                    "tool": "vector_search"
+                })),
+            }
+        } else {
+            Ok(json!({
+                "success": false,
+                "error": "Vector service not enabled. Configure S3 Vectors bucket and index.",
+                "tool": "vector_search"
+            }))
+        }
+    }
+
+    #[allow(dead_code)]
+    pub async fn handle_vector_store(
+        &self,
+        content: &str,
+        data_type: &str,
+        metadata: std::collections::HashMap<String, String>,
+    ) -> Result<Value, ErrorData> {
+        if let Some(vector_service) = &self.vector_service {
+            let cluster_data_type = match data_type {
+                "configuration" => ClusterDataType::Configuration,
+                "log_entry" => ClusterDataType::LogEntry,
+                "documentation" => ClusterDataType::Documentation,
+                "service_status" => ClusterDataType::ServiceStatus,
+                "error_message" => ClusterDataType::ErrorMessage,
+                "command_output" => ClusterDataType::CommandOutput,
+                _ => ClusterDataType::Documentation, // Default fallback
+            };
+
+            match vector_service
+                .index_cluster_data(cluster_data_type, content, metadata)
+                .await
+            {
+                Ok(result) => Ok(result),
+                Err(error) => Ok(json!({
+                    "success": false,
+                    "error": error.to_string(),
+                    "tool": "vector_store"
+                })),
+            }
+        } else {
+            Ok(json!({
+                "success": false,
+                "error": "Vector service not enabled. Configure S3 Vectors bucket and index.",
+                "tool": "vector_store"
+            }))
+        }
     }
 }
 
@@ -813,6 +901,124 @@ impl Service<RoleServer> for GoldentoothService {
                                                 })
                                             ))
                                             .unwrap_or_else(|| "".to_string())
+                                    );
+                                    let content = rmcp::model::Content::text(detailed_message);
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::error(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                            }
+                        }
+                        "vector_search" => {
+                            let query = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("query"))
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| ErrorData {
+                                    code: ErrorCode(-32602), // Invalid params
+                                    message: "Missing required parameter: query".into(),
+                                    data: None,
+                                })?;
+
+                            let limit = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("limit"))
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32);
+
+                            let metadata_filters = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("metadata_filters"))
+                                .and_then(|v| {
+                                    if let Value::Object(obj) = v {
+                                        let mut filters = std::collections::HashMap::new();
+                                        for (k, v) in obj {
+                                            if let Some(s) = v.as_str() {
+                                                filters.insert(k.clone(), s.to_string());
+                                            }
+                                        }
+                                        Some(filters)
+                                    } else {
+                                        None
+                                    }
+                                });
+
+                            match self
+                                .handle_vector_search(query, limit, metadata_filters)
+                                .await
+                            {
+                                Ok(result) => {
+                                    let content = rmcp::model::Content::text(
+                                        serde_json::to_string_pretty(&result).unwrap_or_else(
+                                            |_| "Failed to serialize result".to_string(),
+                                        ),
+                                    );
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::success(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                                Err(error_data) => {
+                                    let detailed_message = format!(
+                                        "Failed to search vectors - Error {}: {}",
+                                        error_data.code.0, error_data.message
+                                    );
+                                    let content = rmcp::model::Content::text(detailed_message);
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::error(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                            }
+                        }
+                        "vector_store" => {
+                            let content = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("content"))
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| ErrorData {
+                                    code: ErrorCode(-32602), // Invalid params
+                                    message: "Missing required parameter: content".into(),
+                                    data: None,
+                                })?;
+
+                            let data_type = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("data_type"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("documentation");
+
+                            let metadata = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("metadata"))
+                                .and_then(|v| {
+                                    if let Value::Object(obj) = v {
+                                        let mut meta = std::collections::HashMap::new();
+                                        for (k, v) in obj {
+                                            if let Some(s) = v.as_str() {
+                                                meta.insert(k.clone(), s.to_string());
+                                            }
+                                        }
+                                        Some(meta)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or_default();
+
+                            match self.handle_vector_store(content, data_type, metadata).await {
+                                Ok(result) => {
+                                    let content = rmcp::model::Content::text(
+                                        serde_json::to_string_pretty(&result).unwrap_or_else(
+                                            |_| "Failed to serialize result".to_string(),
+                                        ),
+                                    );
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::success(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                                Err(error_data) => {
+                                    let detailed_message = format!(
+                                        "Failed to store vectors - Error {}: {}",
+                                        error_data.code.0, error_data.message
                                     );
                                     let content = rmcp::model::Content::text(detailed_message);
                                     let tool_result =
