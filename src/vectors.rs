@@ -222,7 +222,6 @@ impl VectorService {
             dot_product / (norm_a * norm_b)
         }
     }
-
     /// Search for relevant cluster knowledge using vector similarity
     pub async fn search_knowledge(
         &self,
