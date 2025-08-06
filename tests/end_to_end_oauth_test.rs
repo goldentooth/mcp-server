@@ -35,7 +35,7 @@ impl MockOAuthServer {
         let port = self.port;
 
         tokio::spawn(async move {
-            let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+            let listener = TcpListener::bind(format!("127.0.0.1:{port}"))
                 .await
                 .unwrap();
 
@@ -58,7 +58,7 @@ impl MockOAuthServer {
                         .serve_connection(io, service_fn)
                         .await
                     {
-                        eprintln!("Mock OAuth server error: {:?}", err);
+                        eprintln!("Mock OAuth server error: {err:?}");
                     }
                 });
             }
@@ -98,7 +98,7 @@ async fn handle_mock_oauth_request(
             } else {
                 8080
             };
-            let base_url = format!("http://127.0.0.1:{}", port);
+            let base_url = format!("http://127.0.0.1:{port}");
             let discovery = json!({
                 "issuer": base_url,
                 "authorization_endpoint": format!("{}/api/oidc/authorization", base_url),
@@ -132,10 +132,7 @@ async fn handle_mock_oauth_request(
             let state = params.get("state").unwrap_or(&"");
 
             // Simulate successful authorization with redirect
-            let redirect_url = format!(
-                "{}?code={}&state={}",
-                redirect_uri, authorization_code, state
-            );
+            let redirect_url = format!("{redirect_uri}?code={authorization_code}&state={state}");
 
             Ok(hyper::Response::builder()
                 .status(StatusCode::FOUND)
@@ -217,14 +214,11 @@ async fn test_end_to_end_oauth_flow() {
         match auth_service.initialize().await {
             Ok(_) => break,
             Err(e) if retries > 1 => {
-                println!(
-                    "Auth service initialization failed, retrying... Error: {}",
-                    e
-                );
+                println!("Auth service initialization failed, retrying... Error: {e}");
                 sleep(Duration::from_millis(500)).await;
                 retries -= 1;
             }
-            Err(e) => panic!("Failed to initialize auth service after retries: {}", e),
+            Err(e) => panic!("Failed to initialize auth service after retries: {e}"),
         }
     }
 
@@ -238,7 +232,7 @@ async fn test_end_to_end_oauth_flow() {
 
     let server_handle = {
         tokio::spawn(async move {
-            let addr = format!("127.0.0.1:{}", mcp_port).parse().unwrap();
+            let addr = format!("127.0.0.1:{mcp_port}").parse().unwrap();
             http_server.serve(addr).await.unwrap();
         })
     };
@@ -246,7 +240,7 @@ async fn test_end_to_end_oauth_flow() {
     // Give servers time to start
     sleep(Duration::from_millis(200)).await;
 
-    let mcp_base_url = format!("http://127.0.0.1:{}", mcp_port);
+    let mcp_base_url = format!("http://127.0.0.1:{mcp_port}");
 
     // 4. Test Step 1: Claude Code discovers OAuth metadata (this was failing with HTTP 405)
     println!("🔍 Step 1: Testing OAuth metadata discovery...");
@@ -254,8 +248,7 @@ async fn test_end_to_end_oauth_flow() {
     let client = reqwest::Client::new();
     let metadata_response = client
         .get(format!(
-            "{}/.well-known/oauth-authorization-server",
-            mcp_base_url
+            "{mcp_base_url}/.well-known/oauth-authorization-server"
         ))
         .send()
         .await
@@ -280,7 +273,7 @@ async fn test_end_to_end_oauth_flow() {
     println!("🔗 Step 2: Getting authorization URL...");
 
     let auth_url_response = client
-        .post(format!("{}/auth/authorize", mcp_base_url))
+        .post(format!("{mcp_base_url}/auth/authorize"))
         .header("Content-Type", "application/json")
         .body("{}")
         .send()
@@ -297,7 +290,7 @@ async fn test_end_to_end_oauth_flow() {
         .as_str()
         .expect("Missing authorization_url");
 
-    println!("✅ Authorization URL obtained: {}", authorization_url);
+    println!("✅ Authorization URL obtained: {authorization_url}");
 
     // 6. Test Step 3: Simulate user following authorization URL (gets redirected with code)
     println!("👤 Step 3: Simulating user authorization...");
@@ -322,16 +315,13 @@ async fn test_end_to_end_oauth_flow() {
         .expect("Missing location header");
     let location_str = location.to_str().expect("Invalid location header");
 
-    println!("Redirect URL: {}", location_str);
+    println!("Redirect URL: {location_str}");
 
     // Extract authorization code from redirect URL
     let code = extract_code_from_redirect(location_str).expect("Failed to extract code");
     assert_eq!(code, mock_oauth.authorization_code);
 
-    println!(
-        "✅ User authorization simulation successful, code: {}",
-        code
-    );
+    println!("✅ User authorization simulation successful, code: {code}");
 
     // 7. Test Step 4: Exchange authorization code for access token
     println!("🔑 Step 4: Exchanging code for access token...");
@@ -341,7 +331,7 @@ async fn test_end_to_end_oauth_flow() {
     });
 
     let token_response = client
-        .post(format!("{}/auth/token", mcp_base_url))
+        .post(format!("{mcp_base_url}/auth/token"))
         .header("Content-Type", "application/json")
         .body(token_request.to_string())
         .send()
@@ -376,8 +366,7 @@ async fn test_end_to_end_oauth_flow() {
 
     let head_response = client
         .head(format!(
-            "{}/.well-known/oauth-authorization-server",
-            mcp_base_url
+            "{mcp_base_url}/.well-known/oauth-authorization-server"
         ))
         .send()
         .await
@@ -408,7 +397,7 @@ async fn test_end_to_end_oauth_flow() {
     });
 
     let unauth_response = client
-        .post(format!("{}/mcp/request", mcp_base_url))
+        .post(format!("{mcp_base_url}/mcp/request"))
         .header("Content-Type", "application/json")
         .body(mcp_request.to_string())
         .send()
@@ -448,14 +437,11 @@ async fn test_claude_code_discovery_scenario() {
         match auth_service.initialize().await {
             Ok(_) => break,
             Err(e) if retries > 1 => {
-                println!(
-                    "Auth service initialization failed, retrying... Error: {}",
-                    e
-                );
+                println!("Auth service initialization failed, retrying... Error: {e}");
                 sleep(Duration::from_millis(500)).await;
                 retries -= 1;
             }
-            Err(e) => panic!("Failed to initialize auth service after retries: {}", e),
+            Err(e) => panic!("Failed to initialize auth service after retries: {e}"),
         }
     }
 
@@ -468,7 +454,7 @@ async fn test_claude_code_discovery_scenario() {
 
     let _server_handle = {
         tokio::spawn(async move {
-            let addr = format!("127.0.0.1:{}", mcp_port).parse().unwrap();
+            let addr = format!("127.0.0.1:{mcp_port}").parse().unwrap();
             http_server.serve(addr).await.unwrap();
         })
     };
@@ -476,16 +462,13 @@ async fn test_claude_code_discovery_scenario() {
     sleep(Duration::from_millis(100)).await;
 
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}", mcp_port);
+    let base_url = format!("http://127.0.0.1:{mcp_port}");
 
     // Test the exact requests that Claude Code makes during OAuth discovery
 
     // 1. Try to discover OAuth metadata (this was returning HTTP 405 before our fix)
     let oauth_metadata_response = client
-        .get(format!(
-            "{}/.well-known/oauth-authorization-server",
-            base_url
-        ))
+        .get(format!("{base_url}/.well-known/oauth-authorization-server"))
         .send()
         .await
         .expect("Failed to fetch OAuth metadata");
@@ -495,7 +478,7 @@ async fn test_claude_code_discovery_scenario() {
 
     // 2. Also test the OpenID Connect discovery endpoint
     let oidc_metadata_response = client
-        .get(format!("{}/.well-known/openid-configuration", base_url))
+        .get(format!("{base_url}/.well-known/openid-configuration"))
         .send()
         .await
         .expect("Failed to fetch OIDC metadata");
@@ -512,10 +495,7 @@ async fn test_claude_code_discovery_scenario() {
     // (This is actually correct behavior - our OAuth endpoints only handle GET/HEAD,
     // other methods fall through to the main request handler)
     let post_response = client
-        .post(format!(
-            "{}/.well-known/oauth-authorization-server",
-            base_url
-        ))
+        .post(format!("{base_url}/.well-known/oauth-authorization-server"))
         .send()
         .await
         .expect("Failed to make POST request");
@@ -550,7 +530,7 @@ async fn test_oauth_error_scenarios() {
 
     let _server_handle = {
         tokio::spawn(async move {
-            let addr = format!("127.0.0.1:{}", port).parse().unwrap();
+            let addr = format!("127.0.0.1:{port}").parse().unwrap();
             http_server_no_auth.serve(addr).await.unwrap();
         })
     };
@@ -558,14 +538,11 @@ async fn test_oauth_error_scenarios() {
     sleep(Duration::from_millis(100)).await;
 
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}", port);
+    let base_url = format!("http://127.0.0.1:{port}");
 
     // Should return 404 when OAuth not configured
     let response = client
-        .get(format!(
-            "{}/.well-known/oauth-authorization-server",
-            base_url
-        ))
+        .get(format!("{base_url}/.well-known/oauth-authorization-server"))
         .send()
         .await
         .unwrap();

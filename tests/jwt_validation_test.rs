@@ -33,7 +33,7 @@ async fn test_real_jwt_validation_flow() {
 
     let _server_handle = {
         tokio::spawn(async move {
-            let addr = format!("127.0.0.1:{}", test_port).parse().unwrap();
+            let addr = format!("127.0.0.1:{test_port}").parse().unwrap();
             http_server.serve(addr).await.unwrap();
         })
     };
@@ -41,16 +41,13 @@ async fn test_real_jwt_validation_flow() {
     sleep(Duration::from_millis(100)).await;
 
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}", test_port);
+    let base_url = format!("http://127.0.0.1:{test_port}");
 
     println!("🔍 Step 1: Testing OAuth discovery endpoints");
 
     // Test OAuth metadata discovery
     let oauth_response = client
-        .get(format!(
-            "{}/.well-known/oauth-authorization-server",
-            base_url
-        ))
+        .get(format!("{base_url}/.well-known/oauth-authorization-server"))
         .send()
         .await
         .expect("Failed to get OAuth metadata");
@@ -64,7 +61,7 @@ async fn test_real_jwt_validation_flow() {
 
     // Test OIDC metadata discovery
     let oidc_response = client
-        .get(format!("{}/.well-known/openid-configuration", base_url))
+        .get(format!("{base_url}/.well-known/openid-configuration"))
         .send()
         .await
         .expect("Failed to get OIDC metadata");
@@ -80,7 +77,7 @@ async fn test_real_jwt_validation_flow() {
 
     // Get authorization URL
     let auth_url_response = client
-        .post(format!("{}/auth/authorize", base_url))
+        .post(format!("{base_url}/auth/authorize"))
         .send()
         .await
         .expect("Failed to get authorization URL");
@@ -88,17 +85,17 @@ async fn test_real_jwt_validation_flow() {
     assert_eq!(auth_url_response.status(), reqwest::StatusCode::OK);
     let auth_data: Value = auth_url_response.json().await.unwrap();
     let authorization_url = auth_data["authorization_url"].as_str().unwrap();
-    println!("✅ Authorization URL: {}", authorization_url);
+    println!("✅ Authorization URL: {authorization_url}");
 
     println!("🔍 Step 3: Simulating user authorization (manual step)");
-    println!("   In a real test, user would visit: {}", authorization_url);
+    println!("   In a real test, user would visit: {authorization_url}");
     println!("   We'll simulate having received an authorization code");
 
     // For this test, we need a real authorization code from Authelia
     // This would normally come from user interaction
     println!("⚠️ This test requires manual authorization step - cannot complete automatically");
     println!("   To complete this test:");
-    println!("   1. Visit: {}", authorization_url);
+    println!("   1. Visit: {authorization_url}");
     println!("   2. Login and authorize");
     println!("   3. Extract the code from callback URL");
     println!("   4. Use that code in a separate test");
@@ -133,14 +130,14 @@ async fn test_jwt_validation_logic() {
     println!("   1. Empty token");
     match auth_service.validate_token("").await {
         Ok(_) => println!("      ❌ Empty token should fail"),
-        Err(e) => println!("      ✅ Empty token failed as expected: {}", e),
+        Err(e) => println!("      ✅ Empty token failed as expected: {e}"),
     }
 
     // Test 2: Invalid format
     println!("   2. Invalid format token");
     match auth_service.validate_token("invalid-token").await {
         Ok(_) => println!("      ❌ Invalid token should fail"),
-        Err(e) => println!("      ✅ Invalid token failed as expected: {}", e),
+        Err(e) => println!("      ✅ Invalid token failed as expected: {e}"),
     }
 
     // Test 3: Malformed JWT
@@ -150,7 +147,7 @@ async fn test_jwt_validation_logic() {
         .await
     {
         Ok(_) => println!("      ❌ Malformed JWT should fail"),
-        Err(e) => println!("      ✅ Malformed JWT failed as expected: {}", e),
+        Err(e) => println!("      ✅ Malformed JWT failed as expected: {e}"),
     }
 
     // Test 4: Expired token (if we can construct one)
@@ -183,7 +180,7 @@ async fn test_mcp_request_with_jwt_auth() {
 
     let _server_handle = {
         tokio::spawn(async move {
-            let addr = format!("127.0.0.1:{}", test_port).parse().unwrap();
+            let addr = format!("127.0.0.1:{test_port}").parse().unwrap();
             http_server.serve(addr).await.unwrap();
         })
     };
@@ -191,7 +188,7 @@ async fn test_mcp_request_with_jwt_auth() {
     sleep(Duration::from_millis(100)).await;
 
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}", test_port);
+    let base_url = format!("http://127.0.0.1:{test_port}");
 
     println!("🔍 Testing MCP request without authentication");
 
@@ -207,7 +204,7 @@ async fn test_mcp_request_with_jwt_auth() {
     });
 
     let response = client
-        .post(format!("{}/mcp/request", base_url))
+        .post(format!("{base_url}/mcp/request"))
         .json(&mcp_request)
         .send()
         .await
@@ -215,7 +212,7 @@ async fn test_mcp_request_with_jwt_auth() {
 
     println!("   Response status: {}", response.status());
     let response_text = response.text().await.unwrap();
-    println!("   Response body: {}", response_text);
+    println!("   Response body: {response_text}");
 
     // Should get 401 Unauthorized due to missing auth
     // This confirms our server is correctly requiring authentication
@@ -223,7 +220,7 @@ async fn test_mcp_request_with_jwt_auth() {
     println!("🔍 Testing MCP request with invalid Bearer token");
 
     let response_with_bad_token = client
-        .post(format!("{}/mcp/request", base_url))
+        .post(format!("{base_url}/mcp/request"))
         .header("Authorization", "Bearer invalid-token-here")
         .json(&mcp_request)
         .send()
@@ -232,7 +229,7 @@ async fn test_mcp_request_with_jwt_auth() {
 
     println!("   Response status: {}", response_with_bad_token.status());
     let bad_token_response_text = response_with_bad_token.text().await.unwrap();
-    println!("   Response body: {}", bad_token_response_text);
+    println!("   Response body: {bad_token_response_text}");
 
     // This should also fail with 401, and show us the exact error message
     // that Claude Code is receiving
@@ -267,20 +264,20 @@ async fn test_jwt_timing_scenarios() {
     let auth_service = AuthService::new(auth_config);
     {
         let init_time = start_time.elapsed();
-        println!("   ✅ Auth service initialization took: {:?}", init_time);
+        println!("   ✅ Auth service initialization took: {init_time:?}");
 
         // Test OIDC discovery timing
         let discovery_start = std::time::Instant::now();
         match auth_service.discover_oidc_config().await {
             Ok(_) => {
                 let discovery_time = discovery_start.elapsed();
-                println!("   ✅ OIDC discovery took: {:?}", discovery_time);
+                println!("   ✅ OIDC discovery took: {discovery_time:?}");
 
                 if discovery_time > Duration::from_secs(5) {
                     println!("   ⚠️ OIDC discovery is slow - potential timeout issue");
                 }
             }
-            Err(e) => println!("   ❌ OIDC discovery failed: {}", e),
+            Err(e) => println!("   ❌ OIDC discovery failed: {e}"),
         }
 
         // Test JWKS fetching timing
@@ -288,7 +285,7 @@ async fn test_jwt_timing_scenarios() {
         // Note: We don't have direct access to JWKS fetching, but timing
         // would be included in token validation
         let jwks_time = jwks_start.elapsed();
-        println!("   📊 JWKS operation baseline: {:?}", jwks_time);
+        println!("   📊 JWKS operation baseline: {jwks_time:?}");
     }
 
     println!("✅ JWT timing scenario testing completed");

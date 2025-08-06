@@ -17,20 +17,17 @@ async fn main() {
         .unwrap();
 
     println!("Initialize response:");
-    println!("{}", response);
+    println!("{response}");
 
     // Parse and verify the response
     let json: Value = serde_json::from_str(&response).unwrap();
     let protocol_version = json["result"]["protocolVersion"].as_str().unwrap();
-    println!("\nProtocol version returned: {}", protocol_version);
+    println!("\nProtocol version returned: {protocol_version}");
 
     // Verify it's not the old hardcoded "0.1.0"
     assert_ne!(protocol_version, "0.1.0");
     assert_eq!(protocol_version, "2024-11-05");
 
-    println!(
-        "✅ Protocol version is now correctly set to: {}",
-        protocol_version
-    );
+    println!("✅ Protocol version is now correctly set to: {protocol_version}");
     println!("✅ Fixed: Server no longer hardcodes '0.1.0' version!");
 }

@@ -7,7 +7,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Set up auth config
     let auth_config = AuthConfig::default();
-    println!("Auth config: {:?}", auth_config);
+    println!("Auth config: {auth_config:?}");
 
     // Create auth service
     let mut auth_service = AuthService::new(auth_config);
@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match auth_service.initialize().await {
         Ok(_) => println!("✓ Successfully initialized OIDC client"),
         Err(e) => {
-            eprintln!("✗ Failed to initialize OIDC client: {}", e);
+            eprintln!("✗ Failed to initialize OIDC client: {e}");
             return Err(Box::new(e));
         }
     }
@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  JWKS URI: {}", discovery.jwks_uri);
         }
         Err(e) => {
-            eprintln!("✗ OIDC Discovery failed: {}", e);
+            eprintln!("✗ OIDC Discovery failed: {e}");
             return Err(Box::new(e));
         }
     }
@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Err(e) => {
-            eprintln!("✗ JWKS retrieval failed: {}", e);
+            eprintln!("✗ JWKS retrieval failed: {e}");
             return Err(Box::new(e));
         }
     }
@@ -68,11 +68,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match auth_service.get_authorization_url() {
         Ok((auth_url, csrf_token)) => {
             println!("✓ Authorization URL generated:");
-            println!("  URL: {}", auth_url);
+            println!("  URL: {auth_url}");
             println!("  CSRF Token: {}", csrf_token.secret());
         }
         Err(e) => {
-            eprintln!("✗ Authorization URL generation failed: {}", e);
+            eprintln!("✗ Authorization URL generation failed: {e}");
             return Err(Box::new(e));
         }
     }
@@ -87,14 +87,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("  Issuer: {}", claims.iss);
                 println!("  Audience: {}", claims.aud);
                 if let Some(email) = &claims.email {
-                    println!("  Email: {}", email);
+                    println!("  Email: {email}");
                 }
                 if let Some(groups) = &claims.groups {
-                    println!("  Groups: {:?}", groups);
+                    println!("  Groups: {groups:?}");
                 }
             }
             Err(e) => {
-                eprintln!("✗ Token validation failed: {}", e);
+                eprintln!("✗ Token validation failed: {e}");
                 // This is not a fatal error since we might not have a valid token
             }
         }

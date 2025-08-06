@@ -31,7 +31,7 @@ impl CommandExecutor for SystemCommandExecutor {
         let output = StdCommand::new(command)
             .args(args)
             .output()
-            .map_err(|e| format!("Failed to execute command: {}", e))?;
+            .map_err(|e| format!("Failed to execute command: {e}"))?;
 
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -98,7 +98,7 @@ impl CommandExecutor for MockCommandExecutor {
         self.responses
             .get(&key)
             .cloned()
-            .unwrap_or_else(|| Err(format!("No mock response for: {}", key)))
+            .unwrap_or_else(|| Err(format!("No mock response for: {key}")))
     }
 }
 

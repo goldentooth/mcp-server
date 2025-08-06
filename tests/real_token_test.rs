@@ -52,14 +52,14 @@ async fn test_with_real_jwt_token() {
     drop(test_listener);
 
     let _server_handle = tokio::spawn(async move {
-        let addr = format!("127.0.0.1:{}", test_port).parse().unwrap();
+        let addr = format!("127.0.0.1:{test_port}").parse().unwrap();
         http_server.serve(addr).await.unwrap();
     });
 
     sleep(Duration::from_millis(100)).await;
 
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}", test_port);
+    let base_url = format!("http://127.0.0.1:{test_port}");
 
     println!("🔍 Testing MCP request with real token");
 
@@ -74,17 +74,17 @@ async fn test_with_real_jwt_token() {
     });
 
     let response = client
-        .post(format!("{}/mcp/request", base_url))
-        .header("Authorization", format!("Bearer {}", test_token))
+        .post(format!("{base_url}/mcp/request"))
+        .header("Authorization", format!("Bearer {test_token}"))
         .json(&mcp_request)
         .send()
         .await
         .expect("Failed to make MCP request");
 
     let status = response.status();
-    println!("   Response status: {}", status);
+    println!("   Response status: {status}");
     let response_text = response.text().await.unwrap();
-    println!("   Response body: {}", response_text);
+    println!("   Response body: {response_text}");
 
     if status == reqwest::StatusCode::OK {
         println!("✅ Token validation succeeded!");
@@ -94,7 +94,7 @@ async fn test_with_real_jwt_token() {
             serde_json::to_string_pretty(&response_json).unwrap()
         );
     } else {
-        println!("❌ Token validation failed with status: {}", status);
+        println!("❌ Token validation failed with status: {status}");
         println!("   This helps us understand what's going wrong:");
 
         // Parse error response if it's JSON
@@ -104,7 +104,7 @@ async fn test_with_real_jwt_token() {
                 serde_json::to_string_pretty(&error_json).unwrap()
             );
         } else {
-            println!("   Raw error: {}", response_text);
+            println!("   Raw error: {response_text}");
         }
     }
 
@@ -114,10 +114,10 @@ async fn test_with_real_jwt_token() {
     match auth_service.validate_token(&test_token).await {
         Ok(claims) => {
             println!("✅ Direct token validation succeeded!");
-            println!("   Claims: {:?}", claims);
+            println!("   Claims: {claims:?}");
         }
         Err(e) => {
-            println!("❌ Direct token validation failed: {}", e);
+            println!("❌ Direct token validation failed: {e}");
             println!("   This tells us exactly what's wrong with JWT validation");
         }
     }
@@ -184,8 +184,8 @@ async fn test_token_inspection() {
                         .as_secs() as i64;
 
                     println!("⏰ Token timing:");
-                    println!("   Current time: {}", now);
-                    println!("   Token expires: {}", exp);
+                    println!("   Current time: {now}");
+                    println!("   Token expires: {exp}");
                     println!("   Time difference: {} seconds", exp - now);
 
                     if exp < now {
@@ -199,12 +199,12 @@ async fn test_token_inspection() {
 
                 // Check issuer
                 if let Some(iss) = payload_json.get("iss").and_then(|i| i.as_str()) {
-                    println!("   Issuer: {}", iss);
+                    println!("   Issuer: {iss}");
                 }
 
                 // Check audience
                 if let Some(aud) = payload_json.get("aud") {
-                    println!("   Audience: {}", aud);
+                    println!("   Audience: {aud}");
                 }
             }
         }
@@ -230,7 +230,7 @@ async fn test_get_fresh_token() {
     println!("🔍 Step 1: Getting authorization URL");
     match auth_service.get_authorization_url() {
         Ok((auth_url, _csrf_token)) => {
-            println!("✅ Authorization URL: {}", auth_url);
+            println!("✅ Authorization URL: {auth_url}");
             println!("📝 To complete this test:");
             println!("   1. Visit the URL above");
             println!("   2. Login and authorize");
@@ -238,7 +238,7 @@ async fn test_get_fresh_token() {
             println!("   4. Set GOLDENTOOTH_AUTH_CODE env var and run token exchange test");
         }
         Err(e) => {
-            println!("❌ Failed to get authorization URL: {}", e);
+            println!("❌ Failed to get authorization URL: {e}");
         }
     }
 
@@ -257,7 +257,7 @@ async fn test_get_fresh_token() {
                 );
             }
             Err(e) => {
-                println!("❌ Token exchange failed: {}", e);
+                println!("❌ Token exchange failed: {e}");
                 println!("   This might help us understand the OAuth flow issues");
             }
         }

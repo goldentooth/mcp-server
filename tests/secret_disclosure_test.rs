@@ -71,7 +71,7 @@ fn test_error_messages_dont_expose_secrets() {
 
     // Create an error scenario that might expose configuration
     let error = create_safe_auth_error(&config, "Token validation failed");
-    let error_message = format!("{}", error);
+    let error_message = format!("{error}");
 
     // Error message should not contain the secret
     assert!(!error_message.contains("super-secret-that-should-not-appear-in-errors"));
@@ -84,7 +84,7 @@ fn test_debug_prints_redact_sensitive_info() {
     // RED PHASE: This test should fail because debug prints might expose sensitive info
     let sensitive_data = SensitiveString::new("very-sensitive-password-123");
 
-    let debug_output = format!("{:?}", sensitive_data);
+    let debug_output = format!("{sensitive_data:?}");
 
     // Debug output should not contain the actual sensitive value
     assert!(!debug_output.contains("very-sensitive-password-123"));

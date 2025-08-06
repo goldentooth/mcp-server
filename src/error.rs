@@ -34,7 +34,7 @@ impl McpServerError {
         match self {
             McpServerError::Command(msg) => ErrorData {
                 code: ErrorCode(-32001),
-                message: format!("Command execution failed: {}", msg).into(),
+                message: format!("Command execution failed: {msg}").into(),
                 data: Some(serde_json::json!({
                     "error_type": "command_execution",
                     "details": msg
@@ -42,7 +42,7 @@ impl McpServerError {
             },
             McpServerError::Cluster(err) => ErrorData {
                 code: ErrorCode(-32002),
-                message: format!("Cluster operation failed: {}", err).into(),
+                message: format!("Cluster operation failed: {err}").into(),
                 data: Some(serde_json::json!({
                     "error_type": "cluster_operation",
                     "details": err.to_string()
@@ -50,7 +50,7 @@ impl McpServerError {
             },
             McpServerError::Auth(err) => ErrorData {
                 code: ErrorCode(-32003),
-                message: format!("Authentication failed: {}", err).into(),
+                message: format!("Authentication failed: {err}").into(),
                 data: Some(serde_json::json!({
                     "error_type": "authentication",
                     "details": err.to_string()
@@ -58,7 +58,7 @@ impl McpServerError {
             },
             McpServerError::Serialization(err) => ErrorData {
                 code: ErrorCode(-32004),
-                message: format!("JSON serialization failed: {}", err).into(),
+                message: format!("JSON serialization failed: {err}").into(),
                 data: Some(serde_json::json!({
                     "error_type": "serialization",
                     "details": err.to_string()
@@ -66,7 +66,7 @@ impl McpServerError {
             },
             McpServerError::Network(err) => ErrorData {
                 code: ErrorCode(-32005),
-                message: format!("Network request failed: {}", err).into(),
+                message: format!("Network request failed: {err}").into(),
                 data: Some(serde_json::json!({
                     "error_type": "network",
                     "details": err.to_string()
@@ -74,7 +74,7 @@ impl McpServerError {
             },
             McpServerError::Config(msg) => ErrorData {
                 code: ErrorCode(-32006),
-                message: format!("Configuration error: {}", msg).into(),
+                message: format!("Configuration error: {msg}").into(),
                 data: Some(serde_json::json!({
                     "error_type": "configuration",
                     "details": msg
@@ -82,7 +82,7 @@ impl McpServerError {
             },
             McpServerError::Internal(msg) => ErrorData {
                 code: ErrorCode(-32000),
-                message: format!("Internal server error: {}", msg).into(),
+                message: format!("Internal server error: {msg}").into(),
                 data: Some(serde_json::json!({
                     "error_type": "internal",
                     "details": msg

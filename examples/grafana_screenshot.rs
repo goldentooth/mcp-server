@@ -18,7 +18,7 @@ async fn main() {
         "password".to_string()
     });
 
-    println!("🔐 Using credentials - Username: {}", username);
+    println!("🔐 Using credentials - Username: {username}");
 
     // Configure Authelia authentication
     let auth_config = AuthConfig {
@@ -68,7 +68,7 @@ async fn main() {
             }
         }
         Err(e) => {
-            eprintln!("❌ Grafana screenshot failed: {}", e);
+            eprintln!("❌ Grafana screenshot failed: {e}");
             println!("📝 Note: This is expected if Chrome/Chromium is not installed or accessible");
         }
     }
@@ -94,7 +94,7 @@ async fn main() {
             println!("Load time: {} ms", response.metadata.load_time_ms);
         }
         Err(e) => {
-            eprintln!("❌ Dashboard screenshot failed: {}", e);
+            eprintln!("❌ Dashboard screenshot failed: {e}");
             println!("📝 Note: This is expected if Chrome/Chromium is not installed or accessible");
         }
     }

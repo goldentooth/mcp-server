@@ -25,7 +25,8 @@ reqwest = { version = "0.12", features = [
   "rustls-tls",
 ], default-features = false }
 aws-config = "1.5"
-aws-sdk-s3vectors = "1.2"
+aws-sdk-s3 = "1.82"
+aws-sdk-bedrock = "1.104"
 oauth2 = "4.4"
 jsonwebtoken = "9.3"
 base64 = "0.22"

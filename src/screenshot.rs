@@ -121,7 +121,7 @@ impl ScreenshotService {
 
         let browser = self.browser.as_ref().unwrap();
         let tab = browser.new_tab().map_err(|e| {
-            ScreenshotError::BrowserLaunch(format!("Failed to create new tab: {}", e))
+            ScreenshotError::BrowserLaunch(format!("Failed to create new tab: {e}"))
         })?;
 
         // Set viewport size
@@ -141,7 +141,7 @@ impl ScreenshotService {
         if let Some(selector) = &request.wait_for_selector {
             let timeout = Duration::from_millis(request.wait_timeout_ms.unwrap_or(10000));
             tab.wait_for_element_with_custom_timeout(selector, timeout)
-                .map_err(|e| ScreenshotError::Timeout(format!("Selector '{}': {}", selector, e)))?;
+                .map_err(|e| ScreenshotError::Timeout(format!("Selector '{selector}': {e}")))?;
         } else {
             // Default wait for page load
             tab.wait_until_navigated()
@@ -199,10 +199,7 @@ impl ScreenshotService {
                 // Navigate to login page if specified
                 if let Some(login_url) = &auth_config.login_url {
                     tab.navigate_to(login_url).map_err(|e| {
-                        ScreenshotError::Authentication(format!(
-                            "Failed to navigate to login: {}",
-                            e
-                        ))
+                        ScreenshotError::Authentication(format!("Failed to navigate to login: {e}"))
                     })?;
                     tab.wait_until_navigated()
                         .map_err(|e| ScreenshotError::Authentication(e.to_string()))?;
@@ -211,7 +208,7 @@ impl ScreenshotService {
                 // Fill in credentials
                 tab.wait_for_element(username_selector)
                     .map_err(|e| {
-                        ScreenshotError::Authentication(format!("Username field not found: {}", e))
+                        ScreenshotError::Authentication(format!("Username field not found: {e}"))
                     })?
                     .click()
                     .map_err(|e| ScreenshotError::Authentication(e.to_string()))?;
@@ -221,7 +218,7 @@ impl ScreenshotService {
 
                 tab.wait_for_element(password_selector)
                     .map_err(|e| {
-                        ScreenshotError::Authentication(format!("Password field not found: {}", e))
+                        ScreenshotError::Authentication(format!("Password field not found: {e}"))
                     })?
                     .click()
                     .map_err(|e| ScreenshotError::Authentication(e.to_string()))?;
@@ -232,7 +229,7 @@ impl ScreenshotService {
                 // Submit form
                 tab.wait_for_element(submit_selector)
                     .map_err(|e| {
-                        ScreenshotError::Authentication(format!("Submit button not found: {}", e))
+                        ScreenshotError::Authentication(format!("Submit button not found: {e}"))
                     })?
                     .click()
                     .map_err(|e| ScreenshotError::Authentication(e.to_string()))?;
@@ -244,8 +241,7 @@ impl ScreenshotService {
                     let current_url = tab.get_url();
                     if !current_url.contains(success_url) {
                         return Err(ScreenshotError::Authentication(format!(
-                            "Login failed - didn't reach success URL. Current: {}, Expected: {}",
-                            current_url, success_url
+                            "Login failed - didn't reach success URL. Current: {current_url}, Expected: {success_url}"
                         )));
                     }
                 } else {
@@ -258,10 +254,9 @@ impl ScreenshotService {
             AuthMethod::Authelia { redirect_url } => {
                 // Authelia-specific authentication flow
                 // Navigate to the protected resource, get redirected to Authelia, login, get redirected back
-                tab.navigate_to(&redirect_url).map_err(|e| {
+                tab.navigate_to(redirect_url).map_err(|e| {
                     ScreenshotError::Authentication(format!(
-                        "Failed to navigate to protected resource: {}",
-                        e
+                        "Failed to navigate to protected resource: {e}"
                     ))
                 })?;
 
@@ -275,8 +270,7 @@ impl ScreenshotService {
                     tab.wait_for_element("#username")
                         .map_err(|e| {
                             ScreenshotError::Authentication(format!(
-                                "Authelia username field not found: {}",
-                                e
+                                "Authelia username field not found: {e}"
                             ))
                         })?
                         .click()
@@ -288,8 +282,7 @@ impl ScreenshotService {
                     tab.wait_for_element("#password")
                         .map_err(|e| {
                             ScreenshotError::Authentication(format!(
-                                "Authelia password field not found: {}",
-                                e
+                                "Authelia password field not found: {e}"
                             ))
                         })?
                         .click()
@@ -302,8 +295,7 @@ impl ScreenshotService {
                     tab.wait_for_element("input[type=submit]")
                         .map_err(|e| {
                             ScreenshotError::Authentication(format!(
-                                "Authelia submit button not found: {}",
-                                e
+                                "Authelia submit button not found: {e}"
                             ))
                         })?
                         .click()

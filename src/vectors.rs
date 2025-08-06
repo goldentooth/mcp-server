@@ -1,5 +1,6 @@
 use aws_config::BehaviorVersion;
-use aws_sdk_s3vectors::Client;
+use aws_sdk_bedrock::Client as BedrockClient;
+use aws_sdk_s3::Client as S3Client;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -8,12 +9,64 @@ use thiserror::Error;
 pub enum VectorError {
     #[error("AWS configuration error: {0}")]
     AwsConfig(String),
-    #[error("S3 Vectors operation failed: {0}")]
+    #[error("S3 operation failed: {0}")]
     S3Operation(String),
+    #[error("Bedrock operation failed: {0}")]
+    BedrockOperation(String),
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
     #[error("Invalid vector data: {0}")]
     InvalidVector(String),
+}
+
+impl VectorError {
+    /// Convert to MCP ErrorData for protocol responses
+    pub fn to_error_data(&self) -> rmcp::model::ErrorData {
+        use rmcp::model::ErrorCode;
+
+        match self {
+            VectorError::AwsConfig(msg) => rmcp::model::ErrorData {
+                code: ErrorCode(-32007),
+                message: format!("AWS configuration error: {msg}").into(),
+                data: Some(serde_json::json!({
+                    "error_type": "aws_config",
+                    "details": msg
+                })),
+            },
+            VectorError::S3Operation(msg) => rmcp::model::ErrorData {
+                code: ErrorCode(-32008),
+                message: format!("S3 operation failed: {msg}").into(),
+                data: Some(serde_json::json!({
+                    "error_type": "s3_operation",
+                    "details": msg
+                })),
+            },
+            VectorError::BedrockOperation(msg) => rmcp::model::ErrorData {
+                code: ErrorCode(-32009),
+                message: format!("Bedrock operation failed: {msg}").into(),
+                data: Some(serde_json::json!({
+                    "error_type": "bedrock_operation",
+                    "details": msg
+                })),
+            },
+            VectorError::Serialization(err) => rmcp::model::ErrorData {
+                code: ErrorCode(-32004), // Reuse serialization error code
+                message: format!("Vector data serialization failed: {err}").into(),
+                data: Some(serde_json::json!({
+                    "error_type": "serialization",
+                    "details": err.to_string()
+                })),
+            },
+            VectorError::InvalidVector(msg) => rmcp::model::ErrorData {
+                code: ErrorCode(-32010),
+                message: format!("Invalid vector data: {msg}").into(),
+                data: Some(serde_json::json!({
+                    "error_type": "invalid_vector",
+                    "details": msg
+                })),
+            },
+        }
+    }
 }
 
 pub type VectorResult<T> = Result<T, VectorError>;
@@ -22,7 +75,9 @@ pub type VectorResult<T> = Result<T, VectorError>;
 #[derive(Debug, Clone)]
 pub struct VectorService {
     #[allow(dead_code)]
-    client: Client,
+    s3_client: S3Client,
+    #[allow(dead_code)]
+    bedrock_client: BedrockClient,
     #[allow(dead_code)]
     bucket_name: String,
     #[allow(dead_code)]
@@ -34,10 +89,19 @@ impl VectorService {
     pub async fn new(bucket_name: String, index_name: String) -> VectorResult<Self> {
         let config = aws_config::defaults(BehaviorVersion::latest()).load().await;
 
-        let client = Client::new(&config);
+        // Validate AWS credentials are available
+        if config.credentials_provider().is_none() {
+            return Err(VectorError::AwsConfig(
+                "No AWS credentials found. Please configure AWS credentials.".to_string(),
+            ));
+        }
+
+        let s3_client = S3Client::new(&config);
+        let bedrock_client = BedrockClient::new(&config);
 
         Ok(VectorService {
-            client,
+            s3_client,
+            bedrock_client,
             bucket_name,
             index_name,
         })

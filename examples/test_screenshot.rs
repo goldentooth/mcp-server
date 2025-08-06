@@ -1,5 +1,4 @@
 use goldentooth_mcp::screenshot::{AuthConfig, AuthMethod, ScreenshotRequest, ScreenshotService};
-use tokio;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,15 +42,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Err(e) => {
-            println!("❌ Screenshot failed: {}", e);
+            println!("❌ Screenshot failed: {e}");
             match e {
                 goldentooth_mcp::screenshot::ScreenshotError::BrowserLaunch(msg) => {
                     println!(
                         "💡 Hint: Chrome/Chromium might not be installed or available in PATH"
                     );
-                    println!("   Error details: {}", msg);
+                    println!("   Error details: {msg}");
                 }
-                _ => println!("   Error details: {}", e),
+                _ => println!("   Error details: {e}"),
             }
         }
     }
@@ -83,10 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("   - Load time: {}ms", response.metadata.load_time_ms);
         }
         Err(e) => {
-            println!(
-                "❌ Dashboard screenshot failed (expected with test credentials): {}",
-                e
-            );
+            println!("❌ Dashboard screenshot failed (expected with test credentials): {e}");
             println!("💡 This confirms the authentication flow is working correctly!");
         }
     }

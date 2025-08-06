@@ -149,7 +149,7 @@ impl GoldentoothService {
                         Ok(claims) => Ok(Some(claims)),
                         Err(e) => {
                             // Log the specific error for debugging, but return generic error for security
-                            eprintln!("Authentication failed: {}", e);
+                            eprintln!("Authentication failed: {e}");
                             Err(ErrorData {
                                 code: ErrorCode(-32002),
                                 message: "Authentication failed".into(),
@@ -580,7 +580,7 @@ impl Service<RoleServer> for GoldentoothService {
                         Arc::new(schema)
                     };
 
-                    let tools = vec![
+                    let mut tools = vec![
                         Tool {
                             name: "cluster_ping".into(),
                             description: Some("Ping all nodes in the goldentooth cluster to check their status".into()),
@@ -639,6 +639,30 @@ impl Service<RoleServer> for GoldentoothService {
                             ]),
                         },
                     ];
+
+                    // Add vector tools if vector service is enabled
+                    if self.vector_service.is_some() {
+                        tools.extend(vec![
+                            Tool {
+                                name: "vector_search".into(),
+                                description: Some("Search knowledge base using semantic vector search".into()),
+                                annotations: None,
+                                input_schema: create_schema(vec![
+                                    ("query", "string", "Search query for semantic matching", true),
+                                    ("limit", "integer", "Maximum number of results to return (default: 10)", false),
+                                ]),
+                            },
+                            Tool {
+                                name: "vector_store".into(),
+                                description: Some("Store cluster data in vector knowledge base".into()),
+                                annotations: None,
+                                input_schema: create_schema(vec![
+                                    ("content", "string", "Content to store in knowledge base", true),
+                                    ("data_type", "string", "Type of data: configuration, log_entry, documentation, service_status, error_message, command_output", false),
+                                ]),
+                            },
+                        ]);
+                    }
 
                     Ok(rmcp::model::ServerResult::ListToolsResult(
                         ListToolsResult {
@@ -1349,7 +1373,7 @@ impl Service<RoleServer> for GoldentoothService {
                         _ => {
                             Err(ErrorData {
                                 code: ErrorCode(-32601), // Method not found
-                                message: format!("Unknown tool: {}", effective_tool_name).into(),
+                                message: format!("Unknown tool: {effective_tool_name}").into(),
                                 data: None,
                             })
                         }
