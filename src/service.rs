@@ -1,5 +1,6 @@
 use crate::auth::{AuthConfig, AuthError, AuthService};
 use crate::cluster::{ClusterOperations, DefaultClusterOperations};
+use crate::screenshot::{AuthConfig as ScreenshotAuthConfig, ScreenshotRequest, ScreenshotService};
 use crate::vectors::{ClusterDataType, VectorService};
 use rmcp::{
     RoleServer, Service,
@@ -12,11 +13,13 @@ use rmcp::{
 use serde_json::{Value, json};
 use std::future::Future;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub struct GoldentoothService {
     auth_service: Option<AuthService>,
     cluster_ops: Arc<dyn ClusterOperations + Send + Sync>,
     vector_service: Option<VectorService>,
+    screenshot_service: Option<Arc<Mutex<ScreenshotService>>>,
 }
 
 impl std::fmt::Debug for GoldentoothService {
@@ -24,6 +27,7 @@ impl std::fmt::Debug for GoldentoothService {
         f.debug_struct("GoldentoothService")
             .field("auth_service", &self.auth_service.is_some())
             .field("vector_service", &self.vector_service.is_some())
+            .field("screenshot_service", &self.screenshot_service.is_some())
             .finish()
     }
 }
@@ -35,6 +39,7 @@ impl Clone for GoldentoothService {
             auth_service: self.auth_service.clone(),
             cluster_ops: Arc::clone(&self.cluster_ops),
             vector_service: self.vector_service.clone(),
+            screenshot_service: self.screenshot_service.clone(),
         }
     }
 }
@@ -75,6 +80,7 @@ impl GoldentoothService {
             auth_service,
             cluster_ops,
             vector_service: None,
+            screenshot_service: Some(Arc::new(Mutex::new(ScreenshotService::new()))),
         }
     }
 
@@ -90,6 +96,7 @@ impl GoldentoothService {
             auth_service,
             cluster_ops,
             vector_service: None,
+            screenshot_service: Some(Arc::new(Mutex::new(ScreenshotService::new()))),
         }
     }
 
@@ -104,6 +111,7 @@ impl GoldentoothService {
             auth_service: Some(auth_service.clone()),
             cluster_ops,
             vector_service: None,
+            screenshot_service: Some(Arc::new(Mutex::new(ScreenshotService::new()))),
         };
 
         Ok((service, auth_service))
@@ -423,6 +431,67 @@ impl GoldentoothService {
     }
 
     #[allow(dead_code)]
+    pub async fn handle_screenshot(&self, request: ScreenshotRequest) -> Result<Value, ErrorData> {
+        if let Some(screenshot_service) = &self.screenshot_service {
+            let mut screenshot_service_guard = screenshot_service.lock().await;
+            match screenshot_service_guard.capture_screenshot(request).await {
+                Ok(response) => Ok(json!({
+                    "success": response.success,
+                    "image_base64": response.image_base64,
+                    "error": response.error,
+                    "metadata": response.metadata,
+                    "tool": "screenshot_url"
+                })),
+                Err(error) => Ok(json!({
+                    "success": false,
+                    "error": error.to_string(),
+                    "tool": "screenshot_url"
+                })),
+            }
+        } else {
+            Ok(json!({
+                "success": false,
+                "error": "Screenshot service not available",
+                "tool": "screenshot_url"
+            }))
+        }
+    }
+
+    #[allow(dead_code)]
+    pub async fn handle_screenshot_dashboard(
+        &self,
+        dashboard_url: &str,
+        auth_config: Option<ScreenshotAuthConfig>,
+    ) -> Result<Value, ErrorData> {
+        if let Some(screenshot_service) = &self.screenshot_service {
+            let mut screenshot_service_guard = screenshot_service.lock().await;
+            match screenshot_service_guard
+                .capture_dashboard(dashboard_url, auth_config)
+                .await
+            {
+                Ok(response) => Ok(json!({
+                    "success": response.success,
+                    "image_base64": response.image_base64,
+                    "error": response.error,
+                    "metadata": response.metadata,
+                    "tool": "screenshot_dashboard"
+                })),
+                Err(error) => Ok(json!({
+                    "success": false,
+                    "error": error.to_string(),
+                    "tool": "screenshot_dashboard"
+                })),
+            }
+        } else {
+            Ok(json!({
+                "success": false,
+                "error": "Screenshot service not available",
+                "tool": "screenshot_dashboard"
+            }))
+        }
+    }
+
+    #[allow(dead_code)]
     pub async fn handle_vector_store(
         &self,
         content: &str,
@@ -475,6 +544,109 @@ impl Service<RoleServer> for GoldentoothService {
 
             // Pattern match on the request type
             match request {
+                rmcp::model::ClientRequest::InitializeRequest(_init_request) => {
+                    // Return initialization result
+                    let init_result = self.get_info();
+                    Ok(rmcp::model::ServerResult::InitializeResult(init_result))
+                }
+                rmcp::model::ClientRequest::ListToolsRequest(_) => {
+                    use rmcp::model::{ListToolsResult, Tool};
+                    use std::sync::Arc;
+
+                    // Helper function to create JSON schema
+                    let create_schema = |properties: Vec<(&str, &str, &str, bool)>| -> Arc<serde_json::Map<String, serde_json::Value>> {
+                        let mut schema = serde_json::Map::new();
+                        schema.insert("type".into(), serde_json::Value::String("object".into()));
+
+                        let mut props = serde_json::Map::new();
+                        let mut required = Vec::new();
+
+                        for (name, prop_type, description, is_required) in properties {
+                            let mut prop = serde_json::Map::new();
+                            prop.insert("type".into(), serde_json::Value::String(prop_type.into()));
+                            prop.insert("description".into(), serde_json::Value::String(description.into()));
+                            props.insert(name.into(), serde_json::Value::Object(prop));
+
+                            if is_required {
+                                required.push(serde_json::Value::String(name.into()));
+                            }
+                        }
+
+                        schema.insert("properties".into(), serde_json::Value::Object(props));
+                        if !required.is_empty() {
+                            schema.insert("required".into(), serde_json::Value::Array(required));
+                        }
+
+                        Arc::new(schema)
+                    };
+
+                    let tools = vec![
+                        Tool {
+                            name: "cluster_ping".into(),
+                            description: Some("Ping all nodes in the goldentooth cluster to check their status".into()),
+                            annotations: None,
+                            input_schema: create_schema(vec![]),
+                        },
+                        Tool {
+                            name: "cluster_status".into(),
+                            description: Some("Get detailed status information for cluster nodes".into()),
+                            annotations: None,
+                            input_schema: create_schema(vec![
+                                ("node", "string", "Specific node to check (e.g., 'allyrion', 'jast'). If not provided, checks all nodes.", false),
+                            ]),
+                        },
+                        Tool {
+                            name: "service_status".into(),
+                            description: Some("Check the status of systemd services on cluster nodes".into()),
+                            annotations: None,
+                            input_schema: create_schema(vec![
+                                ("service", "string", "Service name to check (e.g., 'consul', 'nomad', 'vault')", true),
+                                ("node", "string", "Specific node to check. If not provided, checks all nodes.", false),
+                            ]),
+                        },
+                        Tool {
+                            name: "resource_usage".into(),
+                            description: Some("Get memory and disk usage information for cluster nodes".into()),
+                            annotations: None,
+                            input_schema: create_schema(vec![
+                                ("node", "string", "Specific node to check. If not provided, checks all nodes.", false),
+                            ]),
+                        },
+                        Tool {
+                            name: "cluster_info".into(),
+                            description: Some("Get comprehensive cluster information including node status and service membership".into()),
+                            annotations: None,
+                            input_schema: create_schema(vec![]),
+                        },
+                        Tool {
+                            name: "screenshot_url".into(),
+                            description: Some("Capture a screenshot of any URL with optional authentication and customizable viewport".into()),
+                            annotations: None,
+                            input_schema: create_schema(vec![
+                                ("url", "string", "The URL to capture a screenshot of", true),
+                                ("width", "integer", "Viewport width in pixels (default: 1920)", false),
+                                ("height", "integer", "Viewport height in pixels (default: 1080)", false),
+                                ("wait_for_selector", "string", "CSS selector to wait for before taking screenshot", false),
+                                ("wait_timeout_ms", "integer", "Maximum time to wait for page load in milliseconds (default: 5000)", false),
+                            ]),
+                        },
+                        Tool {
+                            name: "screenshot_dashboard".into(),
+                            description: Some("Capture a screenshot of a Grafana dashboard with Authelia authentication optimizations".into()),
+                            annotations: None,
+                            input_schema: create_schema(vec![
+                                ("dashboard_url", "string", "The Grafana dashboard URL to capture", true),
+                            ]),
+                        },
+                    ];
+
+                    Ok(rmcp::model::ServerResult::ListToolsResult(
+                        ListToolsResult {
+                            tools,
+                            next_cursor: None,
+                        },
+                    ))
+                }
                 rmcp::model::ClientRequest::CallToolRequest(tool_request) => {
                     let tool_name = &tool_request.params.name;
                     let arguments = &tool_request.params.arguments;
@@ -1019,6 +1191,153 @@ impl Service<RoleServer> for GoldentoothService {
                                     let detailed_message = format!(
                                         "Failed to store vectors - Error {}: {}",
                                         error_data.code.0, error_data.message
+                                    );
+                                    let content = rmcp::model::Content::text(detailed_message);
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::error(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                            }
+                        }
+                        "screenshot_dashboard" => {
+                            let dashboard_url = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("dashboard_url"))
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| ErrorData {
+                                    code: ErrorCode(-32602), // Invalid params
+                                    message: "Missing required parameter: dashboard_url".into(),
+                                    data: None,
+                                })?;
+
+                            let auth_config = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("auth_config"))
+                                .and_then(|v| {
+                                    serde_json::from_value::<ScreenshotAuthConfig>(v.clone()).ok()
+                                });
+
+                            match self
+                                .handle_screenshot_dashboard(dashboard_url, auth_config)
+                                .await
+                            {
+                                Ok(result) => {
+                                    let content = rmcp::model::Content::text(
+                                        serde_json::to_string_pretty(&result).unwrap_or_else(
+                                            |_| "Failed to serialize result".to_string(),
+                                        ),
+                                    );
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::success(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                                Err(error_data) => {
+                                    eprintln!(
+                                        "Screenshot dashboard failed with error {}: {}",
+                                        error_data.code.0, error_data.message
+                                    );
+                                    let detailed_message = format!(
+                                        "Failed to capture dashboard screenshot - Error {}: {} {}",
+                                        error_data.code.0,
+                                        error_data.message,
+                                        error_data
+                                            .data
+                                            .as_ref()
+                                            .map(|d| format!(
+                                                "(Details: {})",
+                                                serde_json::to_string(d).unwrap_or_else(|_| {
+                                                    "<serialization error>".to_string()
+                                                })
+                                            ))
+                                            .unwrap_or_else(|| "".to_string())
+                                    );
+                                    let content = rmcp::model::Content::text(detailed_message);
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::error(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                            }
+                        }
+                        "screenshot_url" => {
+                            let url = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("url"))
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| ErrorData {
+                                    code: ErrorCode(-32602), // Invalid params
+                                    message: "Missing required parameter: url".into(),
+                                    data: None,
+                                })?;
+
+                            let width = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("width"))
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32);
+
+                            let height = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("height"))
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32);
+
+                            let wait_for_selector = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("wait_for_selector"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+
+                            let wait_timeout_ms = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("wait_timeout_ms"))
+                                .and_then(|v| v.as_u64());
+
+                            let auth_config = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("auth_config"))
+                                .and_then(|v| {
+                                    serde_json::from_value::<ScreenshotAuthConfig>(v.clone()).ok()
+                                });
+
+                            let request = ScreenshotRequest {
+                                url: url.to_string(),
+                                width,
+                                height,
+                                wait_for_selector,
+                                wait_timeout_ms,
+                                authenticate: auth_config,
+                            };
+
+                            match self.handle_screenshot(request).await {
+                                Ok(result) => {
+                                    let content = rmcp::model::Content::text(
+                                        serde_json::to_string_pretty(&result).unwrap_or_else(
+                                            |_| "Failed to serialize result".to_string(),
+                                        ),
+                                    );
+                                    let tool_result =
+                                        rmcp::model::CallToolResult::success(vec![content]);
+                                    Ok(rmcp::model::ServerResult::CallToolResult(tool_result))
+                                }
+                                Err(error_data) => {
+                                    eprintln!(
+                                        "Screenshot failed with error {}: {}",
+                                        error_data.code.0, error_data.message
+                                    );
+                                    let detailed_message = format!(
+                                        "Failed to capture screenshot - Error {}: {} {}",
+                                        error_data.code.0,
+                                        error_data.message,
+                                        error_data
+                                            .data
+                                            .as_ref()
+                                            .map(|d| format!(
+                                                "(Details: {})",
+                                                serde_json::to_string(d).unwrap_or_else(|_| {
+                                                    "<serialization error>".to_string()
+                                                })
+                                            ))
+                                            .unwrap_or_else(|| "".to_string())
                                     );
                                     let content = rmcp::model::Content::text(detailed_message);
                                     let tool_result =
