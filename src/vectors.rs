@@ -1,5 +1,5 @@
 use aws_config::BehaviorVersion;
-use aws_sdk_bedrock::Client as BedrockClient;
+use aws_sdk_bedrockruntime::{Client as BedrockRuntimeClient, primitives::Blob};
 use aws_sdk_s3::Client as S3Client;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -74,13 +74,9 @@ pub type VectorResult<T> = Result<T, VectorError>;
 /// Vector operations for storing and searching cluster knowledge
 #[derive(Debug, Clone)]
 pub struct VectorService {
-    #[allow(dead_code)]
     s3_client: S3Client,
-    #[allow(dead_code)]
-    bedrock_client: BedrockClient,
-    #[allow(dead_code)]
+    bedrock_runtime: BedrockRuntimeClient,
     bucket_name: String,
-    #[allow(dead_code)]
     index_name: String,
 }
 
@@ -97,28 +93,134 @@ impl VectorService {
         }
 
         let s3_client = S3Client::new(&config);
-        let bedrock_client = BedrockClient::new(&config);
+        let bedrock_runtime = BedrockRuntimeClient::new(&config);
 
         Ok(VectorService {
             s3_client,
-            bedrock_client,
+            bedrock_runtime,
             bucket_name,
             index_name,
         })
     }
 
+    /// Generate embeddings for text using AWS Bedrock
+    async fn generate_embedding(&self, text: &str) -> VectorResult<Vec<f32>> {
+        // Use Cohere Embed English v3 model
+        let model_id = "cohere.embed-english-v3";
+
+        // Prepare the input for Cohere embedding model
+        let input_data = json!({
+            "texts": [text],
+            "input_type": "search_document"
+        });
+
+        let request = self
+            .bedrock_runtime
+            .invoke_model()
+            .model_id(model_id)
+            .body(Blob::new(input_data.to_string()));
+
+        let response = request.send().await.map_err(|e| {
+            VectorError::BedrockOperation(format!("Failed to generate embedding: {e}"))
+        })?;
+
+        let response_body = response.body.as_ref();
+        let response_json: Value =
+            serde_json::from_slice(response_body).map_err(VectorError::Serialization)?;
+
+        // Extract embeddings from Cohere response
+        let embeddings = response_json
+            .get("embeddings")
+            .and_then(|e| e.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|emb| emb.as_array())
+            .ok_or_else(|| VectorError::InvalidVector("No embeddings in response".to_string()))?;
+
+        let embedding_vec: Result<Vec<f32>, _> = embeddings
+            .iter()
+            .map(|v| {
+                v.as_f64().map(|f| f as f32).ok_or_else(|| {
+                    VectorError::InvalidVector("Invalid embedding value".to_string())
+                })
+            })
+            .collect();
+
+        embedding_vec
+    }
+
     /// Store cluster knowledge as vectors with metadata
     pub async fn store_knowledge(&self, documents: Vec<ClusterDocument>) -> VectorResult<Value> {
-        // TODO: Implement vector storage using PutVectors operation
-        // This would:
-        // 1. Generate embeddings for the documents (using external service or local model)
-        // 2. Store vectors with metadata using client.put_vectors()
+        let mut stored_count = 0;
+        let mut errors = Vec::new();
+        let total_documents = documents.len();
+
+        for doc in documents {
+            // Generate embedding for the document content
+            let embedding = match self.generate_embedding(&doc.content).await {
+                Ok(emb) => emb,
+                Err(e) => {
+                    errors.push(format!("Failed to generate embedding: {e}"));
+                    continue;
+                }
+            };
+
+            // Create a unique key for this document
+            let doc_id = format!("{}-{}", doc.timestamp.timestamp(), doc.content.len());
+            let key = format!("{}/{}.json", self.index_name, doc_id);
+
+            // Prepare document with embedding for storage
+            let doc_with_embedding = json!({
+                "content": doc.content,
+                "data_type": doc.data_type,
+                "metadata": doc.metadata,
+                "timestamp": doc.timestamp.to_rfc3339(),
+                "embedding": embedding,
+                "embedding_model": "cohere.embed-english-v3"
+            });
+
+            // Store in S3
+            let result = self
+                .s3_client
+                .put_object()
+                .bucket(&self.bucket_name)
+                .key(&key)
+                .body(aws_sdk_s3::primitives::ByteStream::from(
+                    doc_with_embedding.to_string().into_bytes(),
+                ))
+                .content_type("application/json")
+                .send()
+                .await;
+
+            match result {
+                Ok(_) => stored_count += 1,
+                Err(e) => errors.push(format!("Failed to store document {doc_id}: {e}")),
+            }
+        }
 
         Ok(json!({
-            "success": true,
-            "stored_count": documents.len(),
+            "success": errors.is_empty(),
+            "stored_count": stored_count,
+            "total_documents": total_documents,
+            "errors": if errors.is_empty() { Value::Null } else { json!(errors) },
             "operation": "store_knowledge"
         }))
+    }
+
+    /// Calculate cosine similarity between two vectors
+    fn cosine_similarity(&self, vec_a: &[f32], vec_b: &[f32]) -> f32 {
+        if vec_a.len() != vec_b.len() {
+            return 0.0;
+        }
+
+        let dot_product: f32 = vec_a.iter().zip(vec_b.iter()).map(|(a, b)| a * b).sum();
+        let norm_a: f32 = vec_a.iter().map(|a| a * a).sum::<f32>().sqrt();
+        let norm_b: f32 = vec_b.iter().map(|b| b * b).sum::<f32>().sqrt();
+
+        if norm_a == 0.0 || norm_b == 0.0 {
+            0.0
+        } else {
+            dot_product / (norm_a * norm_b)
+        }
     }
 
     /// Search for relevant cluster knowledge using vector similarity
@@ -128,18 +230,135 @@ impl VectorService {
         limit: Option<u32>,
         metadata_filters: Option<HashMap<String, String>>,
     ) -> VectorResult<Value> {
-        // TODO: Implement vector search using QueryVectors operation
-        // This would:
-        // 1. Generate embedding for the query
-        // 2. Perform similarity search using client.query_vectors()
-        // 3. Return matching documents with scores
+        let limit = limit.unwrap_or(10) as usize;
 
-        let limit = limit.unwrap_or(10);
+        // Generate embedding for the query
+        let query_embedding = self.generate_embedding(query).await?;
+
+        // List all documents in the index
+        let list_response = self
+            .s3_client
+            .list_objects_v2()
+            .bucket(&self.bucket_name)
+            .prefix(format!("{}/", self.index_name))
+            .send()
+            .await
+            .map_err(|e| VectorError::S3Operation(format!("Failed to list objects: {e}")))?;
+
+        let mut candidates = Vec::new();
+
+        // Process each document
+        if let Some(objects) = list_response.contents {
+            for object in objects {
+                if let Some(key) = object.key {
+                    // Retrieve document
+                    let get_response = self
+                        .s3_client
+                        .get_object()
+                        .bucket(&self.bucket_name)
+                        .key(&key)
+                        .send()
+                        .await;
+
+                    let document_data = match get_response {
+                        Ok(response) => {
+                            let bytes = response.body.collect().await.map_err(|e| {
+                                VectorError::S3Operation(format!("Failed to read object body: {e}"))
+                            })?;
+                            bytes.into_bytes()
+                        }
+                        Err(_) => continue, // Skip documents that can't be read
+                    };
+
+                    // Parse document JSON
+                    let doc_json: Value = match serde_json::from_slice(&document_data) {
+                        Ok(json) => json,
+                        Err(_) => continue, // Skip malformed documents
+                    };
+
+                    // Extract embedding
+                    let doc_embedding: Vec<f32> = match doc_json.get("embedding") {
+                        Some(emb_val) => match emb_val.as_array() {
+                            Some(arr) => {
+                                let emb_result: Result<Vec<f32>, _> = arr
+                                    .iter()
+                                    .map(|v| {
+                                        v.as_f64().map(|f| f as f32).ok_or("Invalid embedding")
+                                    })
+                                    .collect();
+                                match emb_result {
+                                    Ok(emb) => emb,
+                                    Err(_) => continue,
+                                }
+                            }
+                            None => continue,
+                        },
+                        None => continue,
+                    };
+
+                    // Apply metadata filters if specified
+                    if let Some(filters) = &metadata_filters {
+                        if let Some(doc_metadata) =
+                            doc_json.get("metadata").and_then(|m| m.as_object())
+                        {
+                            let mut matches_all_filters = true;
+                            for (filter_key, filter_value) in filters {
+                                if !doc_metadata
+                                    .get(filter_key)
+                                    .and_then(|v| v.as_str())
+                                    .map(|v| v == filter_value)
+                                    .unwrap_or(false)
+                                {
+                                    matches_all_filters = false;
+                                    break;
+                                }
+                            }
+                            if !matches_all_filters {
+                                continue;
+                            }
+                        } else {
+                            continue; // Skip if no metadata but filters specified
+                        }
+                    }
+
+                    // Calculate similarity
+                    let similarity = self.cosine_similarity(&query_embedding, &doc_embedding);
+
+                    candidates.push(json!({
+                        "content": doc_json.get("content").unwrap_or(&Value::Null),
+                        "data_type": doc_json.get("data_type").unwrap_or(&Value::Null),
+                        "metadata": doc_json.get("metadata").unwrap_or(&json!({})),
+                        "timestamp": doc_json.get("timestamp").unwrap_or(&Value::Null),
+                        "similarity_score": similarity,
+                        "document_id": key
+                    }));
+                }
+            }
+        }
+
+        // Sort by similarity score (highest first)
+        candidates.sort_by(|a, b| {
+            let score_a = a
+                .get("similarity_score")
+                .and_then(|s| s.as_f64())
+                .unwrap_or(0.0);
+            let score_b = b
+                .get("similarity_score")
+                .and_then(|s| s.as_f64())
+                .unwrap_or(0.0);
+            score_b
+                .partial_cmp(&score_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Take top results
+        candidates.truncate(limit);
 
         Ok(json!({
             "success": true,
             "query": query,
-            "results": [],
+            "results": candidates,
+            "total_found": candidates.len(),
             "limit": limit,
             "filters": metadata_filters,
             "operation": "search_knowledge"
