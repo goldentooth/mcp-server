@@ -186,7 +186,7 @@ impl DefaultClusterOperations {
         ip_str: String,
     ) -> Result<NodeStatus, ClusterOperationError> {
         let ip_addr = IpAddr::from_str(&ip_str).map_err(|e| {
-            ClusterOperationError::NetworkError(format!("Invalid IP {}: {}", ip_str, e))
+            ClusterOperationError::NetworkError(format!("Invalid IP {ip_str}: {e}"))
         })?;
 
         // Try ICMP ping first, fall back to TCP connect if it fails due to permissions
@@ -195,11 +195,7 @@ impl DefaultClusterOperations {
             Ok(_) => true,
             Err(ping_err) => {
                 // If ICMP fails (likely due to permissions), try TCP connect to SSH port (22)
-                log::debug!(
-                    "ICMP ping failed for {}: {}, trying TCP connect",
-                    node_name,
-                    ping_err
-                );
+                log::debug!("ICMP ping failed for {node_name}: {ping_err}, trying TCP connect");
                 self.tcp_ping(ip_addr, 22, timeout).await
             }
         };
@@ -230,22 +226,19 @@ impl ClusterOperations for DefaultClusterOperations {
     }
 
     async fn get_node_status(&self, node: &str) -> Result<NodeStatus, ClusterOperationError> {
-        let ip_str = NODE_IPS.get(node).ok_or_else(|| {
-            ClusterOperationError::NetworkError(format!("Unknown node: {}", node))
-        })?;
+        let ip_str = NODE_IPS
+            .get(node)
+            .ok_or_else(|| ClusterOperationError::NetworkError(format!("Unknown node: {node}")))?;
 
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
-            .map_err(|e| {
-                ClusterOperationError::NetworkError(format!("HTTP client error: {}", e))
-            })?;
+            .map_err(|e| ClusterOperationError::NetworkError(format!("HTTP client error: {e}")))?;
 
-        let url = format!("http://{}:9100/metrics", ip_str);
+        let url = format!("http://{ip_str}:9100/metrics");
         let response = client.get(&url).send().await.map_err(|e| {
             ClusterOperationError::NetworkError(format!(
-                "Failed to connect to node_exporter on {}: {}",
-                node, e
+                "Failed to connect to node_exporter on {node}: {e}"
             ))
         })?;
 
@@ -259,10 +252,7 @@ impl ClusterOperations for DefaultClusterOperations {
         }
 
         let metrics_text = response.text().await.map_err(|e| {
-            ClusterOperationError::NetworkError(format!(
-                "Failed to read metrics from {}: {}",
-                node, e
-            ))
+            ClusterOperationError::NetworkError(format!("Failed to read metrics from {node}: {e}"))
         })?;
 
         let (uptime, load_average) = self.parse_node_exporter_metrics(&metrics_text)?;
@@ -291,9 +281,7 @@ impl ClusterOperations for DefaultClusterOperations {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
-            .map_err(|e| {
-                ClusterOperationError::NetworkError(format!("HTTP client error: {}", e))
-            })?;
+            .map_err(|e| ClusterOperationError::NetworkError(format!("HTTP client error: {e}")))?;
 
         // Query all specified nodes in parallel
         let query_futures: Vec<_> = nodes_to_check
@@ -303,7 +291,7 @@ impl ClusterOperations for DefaultClusterOperations {
                 let service_name = service.to_string();
                 async move {
                     let ip_str = NODE_IPS.get(node_name).copied().unwrap_or("127.0.0.1");
-                    let url = format!("http://{}:9100/metrics", ip_str);
+                    let url = format!("http://{ip_str}:9100/metrics");
 
                     match client.get(&url).send().await {
                         Ok(response) if response.status().is_success() => {
@@ -353,9 +341,7 @@ impl ClusterOperations for DefaultClusterOperations {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
-            .map_err(|e| {
-                ClusterOperationError::NetworkError(format!("HTTP client error: {}", e))
-            })?;
+            .map_err(|e| ClusterOperationError::NetworkError(format!("HTTP client error: {e}")))?;
 
         // Query all specified nodes in parallel
         let query_futures: Vec<_> = nodes_to_check
@@ -364,7 +350,7 @@ impl ClusterOperations for DefaultClusterOperations {
                 let client = client.clone();
                 async move {
                     let ip_str = NODE_IPS.get(node_name).copied().unwrap_or("127.0.0.1");
-                    let url = format!("http://{}:9100/metrics", ip_str);
+                    let url = format!("http://{ip_str}:9100/metrics");
 
                     match client.get(&url).send().await {
                         Ok(response) if response.status().is_success() => {
@@ -419,8 +405,7 @@ impl ClusterOperations for DefaultClusterOperations {
             // Validate node exists
             if !NODE_IPS.contains_key(specific_node) {
                 return Err(ClusterOperationError::NetworkError(format!(
-                    "Unknown node: {}",
-                    specific_node
+                    "Unknown node: {specific_node}"
                 )));
             }
             specific_node.to_string()
@@ -431,9 +416,9 @@ impl ClusterOperations for DefaultClusterOperations {
 
         // Set up goldentooth command
         let goldentooth_cmd = if as_root {
-            format!("goldentooth command_root {} '{}'", target_nodes, command)
+            format!("goldentooth command_root {target_nodes} '{command}'")
         } else {
-            format!("goldentooth command {} '{}'", target_nodes, command)
+            format!("goldentooth command {target_nodes} '{command}'")
         };
 
         // Execute command with timeout
@@ -444,7 +429,7 @@ impl ClusterOperations for DefaultClusterOperations {
             .stderr(Stdio::piped());
 
         let child = cmd.spawn().map_err(|e| {
-            ClusterOperationError::CommandFailed(format!("Failed to spawn command: {}", e))
+            ClusterOperationError::CommandFailed(format!("Failed to spawn command: {e}"))
         })?;
 
         let output = timeout(
@@ -454,12 +439,11 @@ impl ClusterOperations for DefaultClusterOperations {
         .await
         .map_err(|_| {
             ClusterOperationError::CommandFailed(format!(
-                "Command timed out after {} seconds",
-                timeout_seconds
+                "Command timed out after {timeout_seconds} seconds"
             ))
         })?
         .map_err(|e| {
-            ClusterOperationError::CommandFailed(format!("Command execution failed: {}", e))
+            ClusterOperationError::CommandFailed(format!("Command execution failed: {e}"))
         })?;
 
         // Parse the ansible-playbook output to extract actual command results
@@ -655,18 +639,16 @@ impl ClusterOperations for DefaultClusterOperations {
             .collect::<Vec<_>>()
             .join("&");
 
-        let full_url = format!("{}/loki/api/v1/query_range?{}", loki_url, query_string);
+        let full_url = format!("{loki_url}/loki/api/v1/query_range?{query_string}");
 
         // Make HTTP request to Loki
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .map_err(|e| {
-                ClusterOperationError::NetworkError(format!("HTTP client error: {}", e))
-            })?;
+            .map_err(|e| ClusterOperationError::NetworkError(format!("HTTP client error: {e}")))?;
 
         let response = client.get(&full_url).send().await.map_err(|e| {
-            ClusterOperationError::NetworkError(format!("Loki request failed: {}", e))
+            ClusterOperationError::NetworkError(format!("Loki request failed: {e}"))
         })?;
 
         if !response.status().is_success() {
@@ -681,13 +663,13 @@ impl ClusterOperations for DefaultClusterOperations {
         }
 
         let response_text = response.text().await.map_err(|e| {
-            ClusterOperationError::NetworkError(format!("Failed to read Loki response: {}", e))
+            ClusterOperationError::NetworkError(format!("Failed to read Loki response: {e}"))
         })?;
 
         // Parse Loki response JSON
         let loki_response: serde_json::Value =
             serde_json::from_str(&response_text).map_err(|e| {
-                ClusterOperationError::ParseError(format!("Failed to parse Loki JSON: {}", e))
+                ClusterOperationError::ParseError(format!("Failed to parse Loki JSON: {e}"))
             })?;
 
         let mut results = Vec::new();
@@ -708,7 +690,7 @@ impl ClusterOperations for DefaultClusterOperations {
                         std::collections::HashMap::new()
                     };
 
-                    let stream_id = format!("{:?}", labels);
+                    let stream_id = format!("{labels:?}");
 
                     // Extract log entries
                     if let Some(values) = stream.get("values").and_then(|v| v.as_array()) {
@@ -796,9 +778,7 @@ impl DefaultClusterOperations {
         let uptime = if let Some(boot_timestamp) = boot_time {
             let current_time = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|e| {
-                    ClusterOperationError::ParseError(format!("System time error: {}", e))
-                })?
+                .map_err(|e| ClusterOperationError::ParseError(format!("System time error: {e}")))?
                 .as_secs() as f64;
 
             let uptime_seconds = current_time - boot_timestamp;
@@ -841,7 +821,7 @@ impl DefaultClusterOperations {
 
             // Check for service state (active/inactive)
             if line.starts_with("node_systemd_unit_state{")
-                && line.contains(&format!("name=\"{}.service\"", service_name))
+                && line.contains(&format!("name=\"{service_name}.service\""))
                 && line.contains("state=\"active\"")
                 && line.ends_with(" 1")
             {
@@ -850,7 +830,7 @@ impl DefaultClusterOperations {
 
             // Check for service enabled state
             if line.starts_with("node_systemd_unit_state{")
-                && line.contains(&format!("name=\"{}.service\"", service_name))
+                && line.contains(&format!("name=\"{service_name}.service\""))
                 && line.contains("state=\"enabled\"")
                 && line.ends_with(" 1")
             {
@@ -860,8 +840,7 @@ impl DefaultClusterOperations {
             // Look for service start time if available
             // Format: node_systemd_system_running 1704067200
             if line.starts_with(&format!(
-                "node_systemd_service_start_time_seconds{{name=\"{}.service\"}}",
-                service_name
+                "node_systemd_service_start_time_seconds{{name=\"{service_name}.service\"}}"
             )) {
                 if let Some(value_str) = line.split_whitespace().nth(1) {
                     start_time = value_str.parse().ok();
@@ -1006,7 +985,7 @@ impl DefaultClusterOperations {
 /// Extract label value from Prometheus metrics line
 /// Example: extract_label_value('node_filesystem_size_bytes{device="/dev/sda1",mountpoint="/"} 123', "device") -> Some("/dev/sda1")
 fn extract_label_value(line: &str, label: &str) -> Option<String> {
-    let pattern = format!("{}=\"", label);
+    let pattern = format!("{label}=\"");
     if let Some(start_pos) = line.find(&pattern) {
         let value_start = start_pos + pattern.len();
         if let Some(end_pos) = line[value_start..].find('"') {
@@ -1023,9 +1002,9 @@ fn format_uptime(seconds: u64) -> String {
     let minutes = (seconds % 3600) / 60;
 
     if days > 0 {
-        format!("{} days, {}:{:02}", days, hours, minutes)
+        format!("{days} days, {hours}:{minutes:02}")
     } else {
-        format!("{}:{:02}", hours, minutes)
+        format!("{hours}:{minutes:02}")
     }
 }
 
@@ -1144,7 +1123,7 @@ impl ClusterOperations for MockClusterOperations {
             node: target_node,
             command: command.to_string(),
             exit_code: 0,
-            stdout: format!("Mock output for command: {}", command),
+            stdout: format!("Mock output for command: {command}"),
             stderr: String::new(),
             success: true,
         }])
@@ -1239,27 +1218,27 @@ impl ClusterOperations for MockClusterOperations {
         let mock_logs = vec![
             LokiLogResult {
                 timestamp: "2024-01-15 10:30:45 UTC".to_string(),
-                log_line: format!("Mock Loki log for query: {}", query),
+                log_line: format!("Mock Loki log for query: {query}"),
                 labels: labels1.clone(),
-                stream: format!("{:?}", labels1),
+                stream: format!("{labels1:?}"),
             },
             LokiLogResult {
                 timestamp: "2024-01-15 10:29:12 UTC".to_string(),
                 log_line: "Consul cluster member joined: allyrion".to_string(),
                 labels: labels1.clone(),
-                stream: format!("{:?}", labels1),
+                stream: format!("{labels1:?}"),
             },
             LokiLogResult {
                 timestamp: "2024-01-15 10:28:58 UTC".to_string(),
                 log_line: "Nomad server started successfully".to_string(),
                 labels: labels2.clone(),
-                stream: format!("{:?}", labels2),
+                stream: format!("{labels2:?}"),
             },
             LokiLogResult {
                 timestamp: "2024-01-15 10:28:01 UTC".to_string(),
                 log_line: "Vault unsealed successfully".to_string(),
                 labels: labels3.clone(),
-                stream: format!("{:?}", labels3),
+                stream: format!("{labels3:?}"),
             },
         ];
 
@@ -1346,13 +1325,13 @@ mod tests {
     #[test]
     fn test_cluster_operation_error_variants() {
         let cmd_error = ClusterOperationError::CommandFailed("test".to_string());
-        assert_eq!(format!("{}", cmd_error), "Command failed: test");
+        assert_eq!(format!("{cmd_error}"), "Command failed: test");
 
         let parse_error = ClusterOperationError::ParseError("test".to_string());
-        assert_eq!(format!("{}", parse_error), "Parse error: test");
+        assert_eq!(format!("{parse_error}"), "Parse error: test");
 
         let network_error = ClusterOperationError::NetworkError("test".to_string());
-        assert_eq!(format!("{}", network_error), "Network error: test");
+        assert_eq!(format!("{network_error}"), "Network error: test");
     }
 
     #[tokio::test]

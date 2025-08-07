@@ -62,7 +62,7 @@ async fn test_dual_token_validation_strategy() {
     match auth_service.validate_token(jwt_token).await {
         Ok(_) => println!("❌ JWT validation should have failed with invalid signature"),
         Err(e) => {
-            println!("✅ JWT validation failed as expected: {}", e);
+            println!("✅ JWT validation failed as expected: {e}");
             // Should be a JWT validation error, not introspection error
             assert!(e.to_string().contains("JWT") || e.to_string().contains("validation"));
         }
@@ -74,7 +74,7 @@ async fn test_dual_token_validation_strategy() {
             "❌ Opaque token validation should likely fail without real introspection endpoint"
         ),
         Err(e) => {
-            println!("✅ Opaque token validation failed as expected: {}", e);
+            println!("✅ Opaque token validation failed as expected: {e}");
             // Should be an introspection error, not JWT error
             assert!(
                 e.to_string().contains("introspection") || e.to_string().contains("Request failed")
@@ -114,8 +114,8 @@ async fn test_jwt_format_detection_edge_cases() {
 
     for (token, expected, description) in test_cases {
         let result = auth_service.is_jwt_token(token);
-        assert_eq!(result, expected, "Failed for {}: '{}'", description, token);
-        println!("   ✅ {}: '{}' -> {}", description, token, result);
+        assert_eq!(result, expected, "Failed for {description}: '{token}'");
+        println!("   ✅ {description}: '{token}' -> {result}");
     }
 
     println!("✅ JWT format detection edge cases test completed");
@@ -151,19 +151,18 @@ async fn test_token_introspection_error_handling() {
     ];
 
     for token in invalid_tokens {
-        println!("🔍 Testing introspection with invalid token: {}", token);
+        println!("🔍 Testing introspection with invalid token: {token}");
 
         match auth_service.introspect_access_token(token).await {
-            Ok(_) => println!("❌ Should have failed for invalid token: {}", token),
+            Ok(_) => println!("❌ Should have failed for invalid token: {token}"),
             Err(e) => {
-                println!("✅ Correctly failed for invalid token: {}", e);
+                println!("✅ Correctly failed for invalid token: {e}");
                 // Should be an introspection-related error
                 assert!(
                     e.to_string().contains("introspection")
                         || e.to_string().contains("Request failed")
                         || e.to_string().contains("inactive"),
-                    "Error should be introspection-related: {}",
-                    e
+                    "Error should be introspection-related: {e}"
                 );
             }
         }
@@ -225,17 +224,17 @@ async fn test_with_real_token_if_available() {
             println!("   Issuer: {}", claims.iss);
             println!("   Audience: {}", claims.aud);
             if let Some(username) = &claims.preferred_username {
-                println!("   Username: {}", username);
+                println!("   Username: {username}");
             }
             if let Some(email) = &claims.email {
-                println!("   Email: {}", email);
+                println!("   Email: {email}");
             }
             if let Some(groups) = &claims.groups {
-                println!("   Groups: {:?}", groups);
+                println!("   Groups: {groups:?}");
             }
         }
         Err(e) => {
-            println!("❌ Real token validation failed: {}", e);
+            println!("❌ Real token validation failed: {e}");
             println!("   This helps us understand the authentication issue");
         }
     }

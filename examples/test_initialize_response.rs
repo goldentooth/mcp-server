@@ -18,10 +18,10 @@ async fn main() {
     match serde_json::to_string_pretty(&info) {
         Ok(json) => {
             println!("\nSerialized to JSON:");
-            println!("{}", json);
+            println!("{json}");
         }
         Err(e) => {
-            println!("Failed to serialize: {}", e);
+            println!("Failed to serialize: {e}");
         }
     }
 }

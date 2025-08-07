@@ -91,7 +91,7 @@ pub async fn authenticate_http_request(
         if let Some(token) = auth_header.strip_prefix("Bearer ") {
             match auth_service.validate_token(token).await {
                 Ok(claims) => Ok(Some(claims)),
-                Err(e) => Err(format!("Authentication failed: {}", e)),
+                Err(e) => Err(format!("Authentication failed: {e}")),
             }
         } else {
             Err("Invalid authorization header format".to_string())

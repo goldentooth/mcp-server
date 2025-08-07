@@ -13,8 +13,7 @@ async fn test_request_size_limit_enforced() {
     // Create an oversized request body
     let large_body = "x".repeat(LARGE_REQUEST_SIZE);
     let large_json = format!(
-        r#"{{"jsonrpc":"2.0","method":"initialize","params":{{"data":"{}"}}, "id":1}}"#,
-        large_body
+        r#"{{"jsonrpc":"2.0","method":"initialize","params":{{"data":"{large_body}"}}, "id":1}}"#
     );
 
     // This should be rejected due to size limits
@@ -96,9 +95,7 @@ fn test_size_limit_constants() {
     let max_reasonable_size = 5 * 1024 * 1024; // 5MB
     assert!(
         DEFAULT_MAX_REQUEST_SIZE <= max_reasonable_size,
-        "Request size limit {} should be <= {}",
-        DEFAULT_MAX_REQUEST_SIZE,
-        max_reasonable_size
+        "Request size limit {DEFAULT_MAX_REQUEST_SIZE} should be <= {max_reasonable_size}"
     );
 }
 
@@ -113,10 +110,7 @@ fn is_request_size_valid(size: usize) -> bool {
 }
 
 fn create_size_limit_error(actual_size: usize, max_size: usize) -> String {
-    format!(
-        "Request size {} exceeds maximum allowed size {}",
-        actual_size, max_size
-    )
+    format!("Request size {actual_size} exceeds maximum allowed size {max_size}")
 }
 
 const DEFAULT_MAX_REQUEST_SIZE: usize = 1024 * 1024; // 1MB

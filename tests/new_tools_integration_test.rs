@@ -46,9 +46,7 @@ async fn test_tools_list_includes_new_tools() {
     for expected_tool in &expected_tools {
         assert!(
             tool_names.contains(expected_tool),
-            "Tool '{}' should be in the tools list. Found: {:?}",
-            expected_tool,
-            tool_names
+            "Tool '{expected_tool}' should be in the tools list. Found: {tool_names:?}"
         );
     }
 
@@ -388,12 +386,10 @@ async fn test_comprehensive_tools_integration() {
         // Should not have an error (might have result or might be mock, but not error)
         assert!(
             json["error"].is_null() || !json["error"].is_object(),
-            "Tool {} should not return an error, got: {}",
-            tool_name,
-            json
+            "Tool {tool_name} should not return an error, got: {json}"
         );
 
-        println!("✓ Tool {} responds correctly", tool_name);
+        println!("✓ Tool {tool_name} responds correctly");
     }
 
     println!(

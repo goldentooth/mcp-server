@@ -37,7 +37,7 @@ impl HttpServer {
 
     pub async fn serve(self, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
         let listener = TcpListener::bind(addr).await?;
-        println!("MCP HTTP server listening on {}", addr);
+        println!("MCP HTTP server listening on {addr}");
 
         loop {
             let (stream, _) = listener.accept().await?;
@@ -55,7 +55,7 @@ impl HttpServer {
                     )
                     .await
                 {
-                    eprintln!("Error serving connection: {:?}", err);
+                    eprintln!("Error serving connection: {err:?}");
                 }
             });
         }
@@ -95,7 +95,7 @@ impl HttpServer {
                             // Authentication successful, continue
                         }
                         Err(e) => {
-                            return Err(format!("Authentication failed: {}", e));
+                            return Err(format!("Authentication failed: {e}"));
                         }
                     }
                 } else {
@@ -145,7 +145,7 @@ fn log_request(req: &Request<hyper::body::Incoming>) {
         req.uri(),
         req.headers()
             .iter()
-            .map(|(k, v)| format!("{}: {:?}", k, v))
+            .map(|(k, v)| format!("{k}: {v:?}"))
             .collect::<Vec<_>>()
             .join(", ")
     );
@@ -200,7 +200,7 @@ fn handle_oauth_callback(
     <h1>Authorization Successful</h1>
     <p>Copy the authorization code below:</p>
     <div class="code-container">
-        <code id="auth-code">{}</code>
+        <code id="auth-code">{escaped_code}</code>
     </div>
     <div class="instructions">
         <p>Paste this code back into the goldentooth mcp_auth command when prompted.</p>
@@ -216,8 +216,7 @@ fn handle_oauth_callback(
         }};
     </script>
 </body>
-</html>"#,
-            escaped_code
+</html>"#
         );
 
         Ok(Response::builder()
@@ -248,13 +247,12 @@ fn handle_oauth_callback(
 <body>
     <h1>Authorization Failed</h1>
     <div class="error">
-        <p><strong>Error:</strong> {}</p>
-        <p>{}</p>
+        <p><strong>Error:</strong> {escaped_error}</p>
+        <p>{escaped_error_desc}</p>
     </div>
     <p><a href="/">Try again</a></p>
 </body>
-</html>"#,
-            escaped_error, escaped_error_desc
+</html>"#
         );
 
         Ok(Response::builder()
@@ -368,7 +366,7 @@ pub async fn handle_request(
         false
     };
 
-    println!("🔍 MCP: Skip auth for request: {}", skip_auth);
+    println!("🔍 MCP: Skip auth for request: {skip_auth}");
 
     // Check authentication if enabled, but skip for certain requests
     match check_request_authentication(&headers, auth_service.as_ref(), skip_auth).await {
@@ -381,7 +379,7 @@ pub async fn handle_request(
     // Parse JSON-RPC request from body
     let json_rpc = match parse_json_rpc_request(&body) {
         Ok(json) => json,
-        Err(response) => return Ok(response),
+        Err(response) => return Ok(*response),
     };
 
     // Handle the JSON-RPC request
@@ -414,7 +412,7 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
     // Extract method from JSON-RPC request
     let method = match request.get("method").and_then(|m| m.as_str()) {
         Some(method) => {
-            println!("📍 JSON-RPC: Method extracted: {}", method);
+            println!("📍 JSON-RPC: Method extracted: {method}");
             method
         }
         None => {
@@ -432,7 +430,7 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
     };
 
     let id = request.get("id");
-    println!("🆔 JSON-RPC: Request ID: {:?}", id);
+    println!("🆔 JSON-RPC: Request ID: {id:?}");
 
     match method {
         "initialize" => {
@@ -453,7 +451,7 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
                 info.capabilities.tools.is_some()
             );
             if let Some(ref tools_cap) = info.capabilities.tools {
-                println!("📊 CAPABILITIES: Tools capability details: {:?}", tools_cap);
+                println!("📊 CAPABILITIES: Tools capability details: {tools_cap:?}");
             }
             println!("📊 CAPABILITIES: Instructions: {:?}", info.instructions);
 
@@ -672,11 +670,11 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
                 .and_then(|p| p.get("arguments"))
                 .and_then(|a| a.as_object());
 
-            println!("🔧 TOOLS: Tool name: {:?}", tool_name);
-            println!("🔧 TOOLS: Arguments: {:?}", arguments);
+            println!("🔧 TOOLS: Tool name: {tool_name:?}");
+            println!("🔧 TOOLS: Arguments: {arguments:?}");
 
             if let Some(name) = tool_name {
-                println!("🚀 TOOLS: Executing tool: {}", name);
+                println!("🚀 TOOLS: Executing tool: {name}");
 
                 // Convert arguments to a more usable format
                 let args_map: std::collections::HashMap<String, serde_json::Value> = arguments
@@ -712,7 +710,7 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
                     }
                     "cluster_status" => {
                         let node = args_map.get("node").and_then(|v| v.as_str());
-                        println!("📊 TOOLS: Executing cluster_status for node: {:?}", node);
+                        println!("📊 TOOLS: Executing cluster_status for node: {node:?}");
                         match service.handle_cluster_status(node).await {
                             Ok(result) => {
                                 println!("✅ TOOLS: cluster_status succeeded");
@@ -743,8 +741,7 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
                             .unwrap_or("consul");
                         let node = args_map.get("node").and_then(|v| v.as_str());
                         println!(
-                            "🔧 TOOLS: Executing service_status for service: {}, node: {:?}",
-                            service_name, node
+                            "🔧 TOOLS: Executing service_status for service: {service_name}, node: {node:?}"
                         );
                         match service.handle_service_status(service_name, node).await {
                             Ok(result) => {
@@ -771,7 +768,7 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
                     }
                     "resource_usage" => {
                         let node = args_map.get("node").and_then(|v| v.as_str());
-                        println!("💾 TOOLS: Executing resource_usage for node: {:?}", node);
+                        println!("💾 TOOLS: Executing resource_usage for node: {node:?}");
                         match service.handle_resource_usage(node).await {
                             Ok(result) => {
                                 println!("✅ TOOLS: resource_usage succeeded");
@@ -835,10 +832,7 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
                             .and_then(|v| v.as_u64())
                             .unwrap_or(60);
 
-                        println!(
-                            "🔧 TOOLS: Executing shell_command: {} on node: {:?}",
-                            command, node
-                        );
+                        println!("🔧 TOOLS: Executing shell_command: {command} on node: {node:?}");
                         match service
                             .handle_shell_command(command, node, as_root, timeout)
                             .await
@@ -880,8 +874,7 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
                         let priority = args_map.get("priority").and_then(|v| v.as_str());
 
                         println!(
-                            "📋 TOOLS: Executing journald_logs for node: {:?}, service: {:?}",
-                            node, service_name
+                            "📋 TOOLS: Executing journald_logs for node: {node:?}, service: {service_name:?}"
                         );
                         match service
                             .handle_journald_logs(
@@ -929,7 +922,7 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
                             .map(|v| v as u32);
                         let direction = args_map.get("direction").and_then(|v| v.as_str());
 
-                        println!("🔍 TOOLS: Executing loki_logs with query: {}", query);
+                        println!("🔍 TOOLS: Executing loki_logs with query: {query}");
                         match service
                             .handle_loki_logs(query, start, end, limit, direction)
                             .await
@@ -957,7 +950,7 @@ async fn handle_json_rpc(request: Value, service: GoldentoothService) -> String 
                         }
                     }
                     _ => {
-                        println!("❌ TOOLS: Unknown tool: {}", name);
+                        println!("❌ TOOLS: Unknown tool: {name}");
                         serde_json::json!({
                             "content": [{
                                 "type": "text",
@@ -1043,8 +1036,7 @@ async fn collect_request_body_with_size_limit(
                     .header("Content-Type", "application/json")
                     .header("Access-Control-Allow-Origin", "*")
                     .body(Full::new(Bytes::from(format!(
-                        "{{\"error\":\"Request body too large: {} bytes exceeds maximum {} bytes\"}}",
-                        content_length, MAX_REQUEST_BODY_SIZE
+                        "{{\"error\":\"Request body too large: {content_length} bytes exceeds maximum {MAX_REQUEST_BODY_SIZE} bytes\"}}"
                     ))))
                     .unwrap());
             }
@@ -1074,8 +1066,7 @@ async fn collect_request_body_with_size_limit(
                 .header("Content-Type", "application/json")
                 .header("Access-Control-Allow-Origin", "*")
                 .body(Full::new(Bytes::from(format!(
-                    "{{\"error\":\"Failed to read request body: {}\"}}",
-                    e
+                    "{{\"error\":\"Failed to read request body: {e}\"}}"
                 ))))
                 .unwrap());
         }
@@ -1256,8 +1247,7 @@ async fn handle_auth_request(
                     .header("Content-Type", "application/json")
                     .header("Access-Control-Allow-Origin", "*")
                     .body(Full::new(Bytes::from(format!(
-                        r#"{{"error":"OIDC discovery failed: {}"}}"#,
-                        e
+                        r#"{{"error":"OIDC discovery failed: {e}"}}"#
                     ))))
                     .unwrap()),
             }
@@ -1281,8 +1271,7 @@ async fn handle_auth_request(
                     .header("Content-Type", "application/json")
                     .header("Access-Control-Allow-Origin", "*")
                     .body(Full::new(Bytes::from(format!(
-                        r#"{{"error":"Failed to generate authorization URL: {}"}}"#,
-                        e
+                        r#"{{"error":"Failed to generate authorization URL: {e}"}}"#
                     ))))
                     .unwrap()),
             }
@@ -1352,17 +1341,13 @@ async fn handle_auth_request(
                         .unwrap())
                 }
                 Err(e) => {
-                    println!(
-                        "❌ HTTP: Token exchange failed with detailed error: {:?}",
-                        e
-                    );
+                    println!("❌ HTTP: Token exchange failed with detailed error: {e:?}");
                     Ok(Response::builder()
                         .status(StatusCode::BAD_REQUEST)
                         .header("Content-Type", "application/json")
                         .header("Access-Control-Allow-Origin", "*")
                         .body(Full::new(Bytes::from(format!(
-                            r#"{{"error":"DETAILED_ERROR: {}"}}"#,
-                            e
+                            r#"{{"error":"DETAILED_ERROR: {e}"}}"#
                         ))))
                         .unwrap())
                 }
@@ -1431,8 +1416,7 @@ async fn handle_auth_request(
                     .header("Content-Type", "application/json")
                     .header("Access-Control-Allow-Origin", "*")
                     .body(Full::new(Bytes::from(format!(
-                        r#"{{"error":"Token refresh failed: {}"}}"#,
-                        e
+                        r#"{{"error":"Token refresh failed: {e}"}}"#
                     ))))
                     .unwrap()),
             }
@@ -1484,14 +1468,13 @@ async fn check_request_authentication(
                             // Authentication successful, continue
                         }
                         Err(e) => {
-                            println!("❌ AUTH: Token validation failed: {}", e);
-                            eprintln!("Authentication failed: {}", e);
+                            println!("❌ AUTH: Token validation failed: {e}");
+                            eprintln!("Authentication failed: {e}");
                             return Err(Response::builder()
                                 .status(StatusCode::UNAUTHORIZED)
                                 .header("Access-Control-Allow-Origin", "*")
                                 .body(Full::new(Bytes::from(format!(
-                                    "{{\"error\":\"Authentication failed: {}\"}}",
-                                    e
+                                    "{{\"error\":\"Authentication failed: {e}\"}}"
                                 ))))
                                 .unwrap());
                         }
@@ -1526,7 +1509,7 @@ async fn check_request_authentication(
     Ok(())
 }
 
-fn parse_json_rpc_request(body: &[u8]) -> Result<Value, Response<Full<Bytes>>> {
+fn parse_json_rpc_request(body: &[u8]) -> Result<Value, Box<Response<Full<Bytes>>>> {
     let body_str = String::from_utf8_lossy(body);
     println!(
         "📨 MCP: Request body (length: {}): {}",
@@ -1543,7 +1526,7 @@ fn parse_json_rpc_request(body: &[u8]) -> Result<Value, Response<Full<Bytes>>> {
         Ok(json) => {
             println!("✅ JSON: Successfully parsed JSON-RPC request");
             if let Some(method) = json.get("method").and_then(|m| m.as_str()) {
-                println!("🔧 MCP: Method: {}", method);
+                println!("🔧 MCP: Method: {method}");
                 if method == "initialize" {
                     println!("🚀 MCP: INITIALIZE REQUEST DETECTED!");
                     if let Some(params) = json.get("params") {
@@ -1558,14 +1541,16 @@ fn parse_json_rpc_request(body: &[u8]) -> Result<Value, Response<Full<Bytes>>> {
             Ok(json)
         }
         Err(e) => {
-            println!("❌ JSON: Invalid JSON in request body: {}", e);
-            Err(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("Access-Control-Allow-Origin", "*")
-                .body(Full::new(Bytes::from(
-                    "{\"error\":\"Invalid JSON in request body\"}",
-                )))
-                .unwrap())
+            println!("❌ JSON: Invalid JSON in request body: {e}");
+            Err(Box::new(
+                Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .header("Access-Control-Allow-Origin", "*")
+                    .body(Full::new(Bytes::from(
+                        "{\"error\":\"Invalid JSON in request body\"}",
+                    )))
+                    .unwrap(),
+            ))
         }
     }
 }

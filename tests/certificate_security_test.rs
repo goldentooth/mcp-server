@@ -19,7 +19,7 @@ async fn test_certificate_validation_rejects_invalid_certs_by_default() {
 
     // Print the actual error for debugging
     if let Err(ref e) = result {
-        println!("Actual error: {:?}", e);
+        println!("Actual error: {e:?}");
     }
 
     // Should fail due to certificate validation, not succeed

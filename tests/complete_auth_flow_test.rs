@@ -101,13 +101,13 @@ async fn test_complete_authentication_flow() {
     drop(test_listener);
 
     let _server_handle = tokio::spawn(async move {
-        let addr = format!("127.0.0.1:{}", test_port).parse().unwrap();
+        let addr = format!("127.0.0.1:{test_port}").parse().unwrap();
         http_server.serve(addr).await.unwrap();
     });
 
     sleep(Duration::from_millis(200)).await;
-    let base_url = format!("http://127.0.0.1:{}", test_port);
-    println!("✅ MCP Server started on {}", base_url);
+    let base_url = format!("http://127.0.0.1:{test_port}");
+    println!("✅ MCP Server started on {base_url}");
 
     // === STEP 3: Test OAuth Metadata Endpoints ===
     println!("\n📋 STEP 3: Test OAuth Metadata Discovery");
@@ -116,10 +116,7 @@ async fn test_complete_authentication_flow() {
 
     // Test OAuth authorization server metadata (RFC 8414)
     let oauth_response = client
-        .get(format!(
-            "{}/.well-known/oauth-authorization-server",
-            base_url
-        ))
+        .get(format!("{base_url}/.well-known/oauth-authorization-server"))
         .send()
         .await
         .expect("Failed to get OAuth metadata");
@@ -136,7 +133,7 @@ async fn test_complete_authentication_flow() {
 
     // Test OpenID Connect configuration
     let oidc_response = client
-        .get(format!("{}/.well-known/openid-configuration", base_url))
+        .get(format!("{base_url}/.well-known/openid-configuration"))
         .send()
         .await
         .expect("Failed to get OIDC metadata");
@@ -156,7 +153,7 @@ async fn test_complete_authentication_flow() {
         .expect("Failed to get authorization URL");
 
     println!("✅ Authorization URL generated");
-    println!("   URL: {}", auth_url);
+    println!("   URL: {auth_url}");
     println!("   CSRF token: {}", csrf_token.secret());
 
     // Parse and validate authorization URL parameters
@@ -221,7 +218,7 @@ async fn test_complete_authentication_flow() {
         println!("✅ Login credentials accepted");
     } else {
         let error_text = login_response.text().await.unwrap_or_default();
-        println!("⚠️ Login may have failed: {}", error_text);
+        println!("⚠️ Login may have failed: {error_text}");
         println!("   This is expected if 2FA is enabled or credentials are wrong");
         println!("   Continuing test with mock authorization code...");
     }
@@ -261,7 +258,7 @@ async fn test_complete_authentication_flow() {
     });
 
     let token_response = client
-        .post(format!("{}/auth/token", base_url))
+        .post(format!("{base_url}/auth/token"))
         .json(&token_request)
         .send()
         .await
@@ -269,7 +266,7 @@ async fn test_complete_authentication_flow() {
 
     println!("   Token exchange status: {}", token_response.status());
     let token_response_text = token_response.text().await.unwrap();
-    println!("   Token response: {}", token_response_text);
+    println!("   Token response: {token_response_text}");
 
     // The mock code will likely fail, but we can test with a real code if available
     if let Ok(real_auth_code) = env::var("GOLDENTOOTH_AUTH_CODE") {
@@ -286,7 +283,7 @@ async fn test_complete_authentication_flow() {
                 // Test our dual validation strategy
                 println!("   8.1: Testing token format detection");
                 let is_jwt = auth_service.is_jwt_token(token_secret);
-                println!("   Token format - JWT: {}", is_jwt);
+                println!("   Token format - JWT: {is_jwt}");
 
                 if is_jwt {
                     println!("   8.2: Testing JWT validation path");
@@ -300,11 +297,11 @@ async fn test_complete_authentication_flow() {
                         println!("   Subject: {}", claims.sub);
                         println!("   Issuer: {}", claims.iss);
                         if let Some(username) = &claims.preferred_username {
-                            println!("   Username: {}", username);
+                            println!("   Username: {username}");
                         }
                     }
                     Err(e) => {
-                        println!("❌ Token validation failed: {}", e);
+                        println!("❌ Token validation failed: {e}");
                     }
                 }
 
@@ -322,17 +319,17 @@ async fn test_complete_authentication_flow() {
                 });
 
                 let mcp_response = client
-                    .post(format!("{}/mcp/request", base_url))
-                    .header("Authorization", format!("Bearer {}", token_secret))
+                    .post(format!("{base_url}/mcp/request"))
+                    .header("Authorization", format!("Bearer {token_secret}"))
                     .json(&mcp_request)
                     .send()
                     .await
                     .expect("Failed to make authenticated MCP request");
 
                 let mcp_status = mcp_response.status();
-                println!("   MCP request status: {}", mcp_status);
+                println!("   MCP request status: {mcp_status}");
                 let mcp_response_text = mcp_response.text().await.unwrap();
-                println!("   MCP response: {}", mcp_response_text);
+                println!("   MCP response: {mcp_response_text}");
 
                 if mcp_status == reqwest::StatusCode::OK {
                     println!("✅ Authenticated MCP request successful!");
@@ -348,7 +345,7 @@ async fn test_complete_authentication_flow() {
                 }
             }
             Err(e) => {
-                println!("❌ Real token exchange failed: {}", e);
+                println!("❌ Real token exchange failed: {e}");
             }
         }
     } else {
@@ -373,7 +370,7 @@ async fn test_complete_authentication_flow() {
     });
 
     let unauth_response = client
-        .post(format!("{}/mcp/request", base_url))
+        .post(format!("{base_url}/mcp/request"))
         .json(&unauth_mcp_request)
         .send()
         .await
@@ -407,20 +404,17 @@ async fn test_oauth_discovery_endpoints() {
     drop(test_listener);
 
     let _server_handle = tokio::spawn(async move {
-        let addr = format!("127.0.0.1:{}", test_port).parse().unwrap();
+        let addr = format!("127.0.0.1:{test_port}").parse().unwrap();
         http_server.serve(addr).await.unwrap();
     });
 
     sleep(Duration::from_millis(100)).await;
-    let base_url = format!("http://127.0.0.1:{}", test_port);
+    let base_url = format!("http://127.0.0.1:{test_port}");
     let client = reqwest::Client::new();
 
     // Test OAuth metadata endpoint - should return 404 when auth is disabled
     let oauth_response = client
-        .get(format!(
-            "{}/.well-known/oauth-authorization-server",
-            base_url
-        ))
+        .get(format!("{base_url}/.well-known/oauth-authorization-server"))
         .send()
         .await
         .expect("Failed to access OAuth metadata");
@@ -431,7 +425,7 @@ async fn test_oauth_discovery_endpoints() {
 
     // Test OIDC configuration endpoint - should also return 404 when auth is disabled
     let oidc_response = client
-        .get(format!("{}/.well-known/openid-configuration", base_url))
+        .get(format!("{base_url}/.well-known/openid-configuration"))
         .send()
         .await
         .expect("Failed to access OIDC configuration");
@@ -470,19 +464,15 @@ async fn test_token_validation_scenarios() {
     ];
 
     for (description, token, expected_jwt) in test_cases {
-        println!("   Testing: {}", description);
+        println!("   Testing: {description}");
 
         // Test format detection - this doesn't require network access
         let is_jwt = auth_service.is_jwt_token(token);
         assert_eq!(
             is_jwt, expected_jwt,
-            "JWT detection failed for: {}",
-            description
+            "JWT detection failed for: {description}"
         );
-        println!(
-            "     Format detection: {} (expected: {})",
-            is_jwt, expected_jwt
-        );
+        println!("     Format detection: {is_jwt} (expected: {expected_jwt})");
 
         // Skip actual validation in CI - it requires network access to Authelia
         if env::var("CI").is_ok() || env::var("GITHUB_ACTIONS").is_ok() {
@@ -494,7 +484,7 @@ async fn test_token_validation_scenarios() {
         match auth_service.validate_token(token).await {
             Ok(_) => println!("     ❌ Validation unexpectedly succeeded"),
             Err(e) => {
-                println!("     ✅ Validation failed as expected: {}", e);
+                println!("     ✅ Validation failed as expected: {e}");
 
                 // Verify it took the correct validation path
                 if expected_jwt {

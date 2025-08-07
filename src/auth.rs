@@ -293,25 +293,19 @@ impl AuthService {
         const CLUSTER_CA_PATH: &str = "/etc/ssl/certs/goldentooth.pem";
         match fs::read_to_string(CLUSTER_CA_PATH) {
             Ok(ca_cert_pem) => {
-                println!(
-                    "🔒 AUTH: Found cluster CA certificate at {}",
-                    CLUSTER_CA_PATH
-                );
+                println!("🔒 AUTH: Found cluster CA certificate at {CLUSTER_CA_PATH}");
                 match reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()) {
                     Ok(ca_cert) => {
                         client_builder = client_builder.add_root_certificate(ca_cert);
                         println!("✅ AUTH: Successfully loaded cluster CA certificate");
                     }
                     Err(e) => {
-                        println!("❌ AUTH: Failed to parse cluster CA certificate: {}", e);
+                        println!("❌ AUTH: Failed to parse cluster CA certificate: {e}");
                     }
                 }
             }
             Err(e) => {
-                println!(
-                    "⚠️ AUTH: Cluster CA certificate not found at {}: {}",
-                    CLUSTER_CA_PATH, e
-                );
+                println!("⚠️ AUTH: Cluster CA certificate not found at {CLUSTER_CA_PATH}: {e}");
             }
         }
 
@@ -332,7 +326,7 @@ impl AuthService {
         }
 
         let client = client_builder.build().unwrap_or_else(|e| {
-            println!("❌ AUTH: Failed to build HTTP client: {}", e);
+            println!("❌ AUTH: Failed to build HTTP client: {e}");
             Client::new()
         });
 
@@ -353,15 +347,15 @@ impl AuthService {
             ClientId::new(self.config.client_id.clone()),
             Some(ClientSecret::new(self.config.client_secret.clone())),
             AuthUrl::new(discovery.authorization_endpoint.clone())
-                .map_err(|e| AuthError::InvalidConfig(format!("Invalid auth URL: {}", e)))?,
+                .map_err(|e| AuthError::InvalidConfig(format!("Invalid auth URL: {e}")))?,
             Some(
                 TokenUrl::new(discovery.token_endpoint.clone())
-                    .map_err(|e| AuthError::InvalidConfig(format!("Invalid token URL: {}", e)))?,
+                    .map_err(|e| AuthError::InvalidConfig(format!("Invalid token URL: {e}")))?,
             ),
         )
         .set_redirect_uri(
             RedirectUrl::new(self.config.redirect_uri.clone())
-                .map_err(|e| AuthError::InvalidConfig(format!("Invalid redirect URI: {}", e)))?,
+                .map_err(|e| AuthError::InvalidConfig(format!("Invalid redirect URI: {e}")))?,
         )
         .set_auth_type(oauth2::AuthType::RequestBody); // Use client_secret_post instead of client_secret_basic
 
@@ -454,7 +448,7 @@ impl AuthService {
             .kid
             .ok_or_else(|| AuthError::InvalidConfig("JWT missing key ID".to_string()))?;
 
-        println!("🔑 AUTH: JWT key ID: {}", kid);
+        println!("🔑 AUTH: JWT key ID: {kid}");
 
         // Get JWKS and find the matching key
         let jwks = self.get_jwks().await?;
@@ -492,10 +486,7 @@ impl AuthService {
         let discovery = self.discover_oidc_config().await?;
         let introspection_url = format!("{}/api/oidc/introspect", self.config.authelia_base_url);
 
-        println!(
-            "🌐 AUTH: Token introspection endpoint: {}",
-            introspection_url
-        );
+        println!("🌐 AUTH: Token introspection endpoint: {introspection_url}");
 
         // Prepare introspection request
         let introspection_request = IntrospectionRequest {
@@ -513,22 +504,22 @@ impl AuthService {
             .form(&introspection_request)
             .send()
             .await
-            .map_err(|e| AuthError::TokenIntrospection(format!("Request failed: {}", e)))?;
+            .map_err(|e| AuthError::TokenIntrospection(format!("Request failed: {e}")))?;
 
         let status = response.status();
-        println!("📥 AUTH: Token introspection response status: {}", status);
+        println!("📥 AUTH: Token introspection response status: {status}");
 
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
             return Err(AuthError::TokenIntrospection(format!(
-                "HTTP {}: {}",
-                status, error_text
+                "HTTP {status}: {error_text}"
             )));
         }
 
-        let introspection: IntrospectionResponse = response.json().await.map_err(|e| {
-            AuthError::TokenIntrospection(format!("Failed to parse response: {}", e))
-        })?;
+        let introspection: IntrospectionResponse = response
+            .json()
+            .await
+            .map_err(|e| AuthError::TokenIntrospection(format!("Failed to parse response: {e}")))?;
 
         println!(
             "📋 AUTH: Token introspection result - active: {}",
@@ -604,7 +595,7 @@ impl AuthService {
                 println!("🌐 AUTH: Token endpoint: {}", discovery.token_endpoint);
             }
             Err(e) => {
-                println!("⚠️ AUTH: Could not fetch OIDC discovery config: {}", e);
+                println!("⚠️ AUTH: Could not fetch OIDC discovery config: {e}");
             }
         }
 
@@ -629,7 +620,7 @@ impl AuthService {
                         println!("   - Body: {}", String::from_utf8_lossy(&response.body));
                     }
                     Err(e) => {
-                        println!("❌ AUTH: Token exchange HTTP error: {:?}", e);
+                        println!("❌ AUTH: Token exchange HTTP error: {e:?}");
                     }
                 }
 
@@ -643,8 +634,8 @@ impl AuthService {
             .request_async(http_client)
             .await
             .map_err(|e| {
-                println!("💥 AUTH: OAuth2 token exchange failed with error: {:?}", e);
-                AuthError::InvalidConfig(format!("Token exchange failed: {:?}", e))
+                println!("💥 AUTH: OAuth2 token exchange failed with error: {e:?}");
+                AuthError::InvalidConfig(format!("Token exchange failed: {e:?}"))
             })?;
 
         let token_secret = token_result.access_token().secret();
@@ -673,7 +664,7 @@ impl AuthService {
             .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
             .request_async(http_client)
             .await
-            .map_err(|e| AuthError::InvalidConfig(format!("Token refresh failed: {}", e)))?;
+            .map_err(|e| AuthError::InvalidConfig(format!("Token refresh failed: {e}")))?;
 
         Ok(token_result.access_token().clone())
     }
@@ -694,11 +685,11 @@ impl AuthService {
     pub fn try_new_with_ca_path(_config: AuthConfig, ca_path: &str) -> AuthResult<Self> {
         // Try to load and validate the CA certificate
         let ca_content = fs::read_to_string(ca_path)
-            .map_err(|e| AuthError::CertificateError(format!("Failed to read CA file: {}", e)))?;
+            .map_err(|e| AuthError::CertificateError(format!("Failed to read CA file: {e}")))?;
 
         // Validate the certificate content
         reqwest::Certificate::from_pem(ca_content.as_bytes())
-            .map_err(|e| AuthError::CertificateError(format!("Invalid CA certificate: {}", e)))?;
+            .map_err(|e| AuthError::CertificateError(format!("Invalid CA certificate: {e}")))?;
 
         // For now, just return an error to make the test pass
         Err(AuthError::CertificateError(
