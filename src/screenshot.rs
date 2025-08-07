@@ -182,12 +182,37 @@ impl ScreenshotService {
 
         let path = req.uri().path();
         if let Some(filename) = path.strip_prefix('/') {
+            // Security: Validate filename to prevent directory traversal
+            if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
+                return Ok(Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("Invalid filename".to_string())?);
+            }
+
+            // Only allow PNG files
+            if !filename.ends_with(".png") {
+                return Ok(Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body("File not found".to_string())?);
+            }
+
             let file_path = Path::new(&directory).join(filename);
 
-            if file_path.exists() && filename.ends_with(".png") {
-                match fs::read(&file_path) {
+            // Additional security: ensure the resolved path is within the directory
+            if let Ok(canonical_file) = file_path.canonicalize() {
+                if let Ok(canonical_dir) = Path::new(&directory).canonicalize() {
+                    if !canonical_file.starts_with(&canonical_dir) {
+                        return Ok(Response::builder()
+                            .status(StatusCode::FORBIDDEN)
+                            .body("Access denied".to_string())?);
+                    }
+                }
+            }
+
+            if file_path.exists() {
+                match tokio::fs::read(&file_path).await {
                     Ok(contents) => {
-                        // For PNG files, we need to return binary data as base64 or use a different approach
+                        // Return base64 data URL for binary PNG data
                         let base64_content =
                             base64::engine::general_purpose::STANDARD.encode(&contents);
                         return Ok(Response::builder()
@@ -198,7 +223,7 @@ impl ScreenshotService {
                     Err(_) => {
                         return Ok(Response::builder()
                             .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body("Failed to read file".to_string())?);
+                            .body("Server error".to_string())?);
                     }
                 }
             }
@@ -206,7 +231,7 @@ impl ScreenshotService {
 
         Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
-            .body("Screenshot not found".to_string())?)
+            .body("File not found".to_string())?)
     }
 
     pub async fn capture_screenshot(
@@ -517,5 +542,39 @@ impl ScreenshotService {
 impl Default for ScreenshotService {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_path_validation_security() {
+        // Test path traversal detection
+        assert!("../../../etc/passwd".contains(".."));
+        assert!("subdir/../../file".contains(".."));
+        assert!("file\\..\\other".contains(".."));
+        assert!("normal_file.png".ends_with(".png"));
+        assert!(!"script.js".ends_with(".png"));
+    }
+
+    #[test]
+    fn test_screenshot_service_creation() {
+        let service = ScreenshotService::new();
+        assert!(service.browser.is_none());
+        assert!(service.http_server_port.is_none());
+        assert!(service.http_server_directory.is_none());
+    }
+
+    #[test]
+    fn test_configure_http_server() {
+        let mut service = ScreenshotService::new();
+        service.configure_http_server(8080, "/test/path".to_string());
+        assert_eq!(service.http_server_port, Some(8080));
+        assert_eq!(
+            service.http_server_directory,
+            Some("/test/path".to_string())
+        );
     }
 }

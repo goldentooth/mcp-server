@@ -51,6 +51,12 @@ impl Default for GoldentoothService {
 }
 
 impl GoldentoothService {
+    fn get_screenshot_base_url() -> String {
+        let host = std::env::var("SCREENSHOT_HTTP_HOST")
+            .unwrap_or_else(|_| "velaryon.nodes.goldentooth.net".to_string());
+        let port = std::env::var("SCREENSHOT_HTTP_PORT").unwrap_or_else(|_| "8081".to_string());
+        format!("http://{host}:{port}")
+    }
     /// Extract the base tool name from a potentially prefixed tool name.
     /// MCP clients may prefix tool names with server identifiers like "mcp__goldentooth_mcp__".
     /// This function extracts the actual tool name after the last "__" separator.
@@ -105,7 +111,17 @@ impl GoldentoothService {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(screenshot_service) = &self.screenshot_service {
             let mut service_guard = screenshot_service.lock().await;
-            service_guard.configure_http_server(8081, "/tmp/screenshots".to_string());
+
+            // Configure HTTP server with environment variables or defaults
+            let port = std::env::var("SCREENSHOT_HTTP_PORT")
+                .unwrap_or_else(|_| "8081".to_string())
+                .parse::<u16>()
+                .unwrap_or(8081);
+
+            let directory = std::env::var("SCREENSHOT_DIRECTORY")
+                .unwrap_or_else(|_| "/tmp/screenshots".to_string());
+
+            service_guard.configure_http_server(port, directory);
             service_guard
                 .start_http_server()
                 .await
@@ -485,7 +501,7 @@ impl GoldentoothService {
             true,
             Some("/tmp/screenshots".to_string()),
             true,
-            Some("http://velaryon.nodes.goldentooth.net:8081".to_string()),
+            Some(Self::get_screenshot_base_url()),
         )
         .await
     }
