@@ -26,7 +26,7 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
-        args: ["--", "-D", "warnings"]
+        args: ["--all-targets", "--all-features", "--", "-D", "warnings"]
 
       - id: cargo-check
         name: cargo check
