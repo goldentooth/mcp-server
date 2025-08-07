@@ -42,6 +42,10 @@ async fn main() {
         ),
         wait_timeout_ms: Some(15000),
         authenticate: Some(auth_config),
+        save_to_file: Some(true),
+        file_directory: Some("/tmp/screenshots".to_string()),
+        http_serve: Some(true),
+        http_base_url: Some("http://localhost:8081".to_string()),
     };
 
     match screenshot_service.capture_screenshot(request).await {
