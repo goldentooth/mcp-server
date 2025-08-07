@@ -54,8 +54,9 @@ impl GoldentoothService {
     pub fn get_screenshot_base_url() -> String {
         let host = std::env::var("SCREENSHOT_HTTP_HOST")
             .unwrap_or_else(|_| "velaryon.nodes.goldentooth.net".to_string());
-        let port = std::env::var("SCREENSHOT_HTTP_PORT").unwrap_or_else(|_| "8081".to_string());
-        format!("http://{host}:{port}")
+        // Use the same port as the main MCP server, not a separate screenshot server
+        let port = std::env::var("MCP_PORT").unwrap_or_else(|_| "32456".to_string());
+        format!("http://{host}:{port}/screenshots")
     }
     /// Extract the base tool name from a potentially prefixed tool name.
     /// MCP clients may prefix tool names with server identifiers like "mcp__goldentooth_mcp__".
@@ -104,30 +105,6 @@ impl GoldentoothService {
             vector_service: None,
             screenshot_service: Some(Arc::new(Mutex::new(ScreenshotService::new()))),
         }
-    }
-
-    pub async fn initialize_http_server(
-        &self,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(screenshot_service) = &self.screenshot_service {
-            let mut service_guard = screenshot_service.lock().await;
-
-            // Configure HTTP server with environment variables or defaults
-            let port = std::env::var("SCREENSHOT_HTTP_PORT")
-                .unwrap_or_else(|_| "8081".to_string())
-                .parse::<u16>()
-                .unwrap_or(8081);
-
-            let directory = std::env::var("SCREENSHOT_DIRECTORY")
-                .unwrap_or_else(|_| "/tmp/screenshots".to_string());
-
-            service_guard.configure_http_server(port, directory);
-            service_guard
-                .start_http_server()
-                .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
-        }
-        Ok(())
     }
 
     pub async fn with_auth() -> Result<(Self, AuthService), AuthError> {
@@ -1345,6 +1322,7 @@ impl Service<RoleServer> for GoldentoothService {
                             }
                         }
                         "screenshot_url" => {
+                            log::info!("Screenshot URL tool called with arguments: {arguments:?}");
                             let url = arguments
                                 .as_ref()
                                 .and_then(|args| args.get("url"))
