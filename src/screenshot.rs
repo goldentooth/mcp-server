@@ -1,3 +1,5 @@
+use bytes::Bytes;
+use http_body_util::Full;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
@@ -173,11 +175,11 @@ impl ScreenshotService {
     async fn handle_http_request(
         req: Request<hyper::body::Incoming>,
         directory: String,
-    ) -> Result<Response<String>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Response<Full<Bytes>>, Box<dyn std::error::Error + Send + Sync>> {
         if req.method() != Method::GET {
             return Ok(Response::builder()
                 .status(StatusCode::METHOD_NOT_ALLOWED)
-                .body("Method not allowed".to_string())?);
+                .body(Full::new(Bytes::from("Method not allowed")))?);
         }
 
         let path = req.uri().path();
@@ -186,14 +188,14 @@ impl ScreenshotService {
             if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
                 return Ok(Response::builder()
                     .status(StatusCode::BAD_REQUEST)
-                    .body("Invalid filename".to_string())?);
+                    .body(Full::new(Bytes::from("Invalid filename")))?);
             }
 
             // Only allow PNG files
             if !filename.ends_with(".png") {
                 return Ok(Response::builder()
                     .status(StatusCode::NOT_FOUND)
-                    .body("File not found".to_string())?);
+                    .body(Full::new(Bytes::from("File not found")))?);
             }
 
             let file_path = Path::new(&directory).join(filename);
@@ -204,7 +206,7 @@ impl ScreenshotService {
                     if !canonical_file.starts_with(&canonical_dir) {
                         return Ok(Response::builder()
                             .status(StatusCode::FORBIDDEN)
-                            .body("Access denied".to_string())?);
+                            .body(Full::new(Bytes::from("Access denied")))?);
                     }
                 }
             }
@@ -212,18 +214,16 @@ impl ScreenshotService {
             if file_path.exists() {
                 match tokio::fs::read(&file_path).await {
                     Ok(contents) => {
-                        // Return base64 data URL for binary PNG data
-                        let base64_content =
-                            base64::engine::general_purpose::STANDARD.encode(&contents);
+                        // Return raw binary PNG data with proper content type
                         return Ok(Response::builder()
-                            .header("Content-Type", "text/plain")
+                            .header("Content-Type", "image/png")
                             .header("Cache-Control", "public, max-age=3600")
-                            .body(format!("data:image/png;base64,{base64_content}"))?);
+                            .body(Full::new(Bytes::from(contents)))?);
                     }
                     Err(_) => {
                         return Ok(Response::builder()
                             .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body("Server error".to_string())?);
+                            .body(Full::new(Bytes::from("Server error")))?);
                     }
                 }
             }
@@ -231,7 +231,7 @@ impl ScreenshotService {
 
         Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
-            .body("File not found".to_string())?)
+            .body(Full::new(Bytes::from("File not found")))?)
     }
 
     pub async fn capture_screenshot(
@@ -639,31 +639,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_file_reading_and_base64_encoding() {
+    async fn test_file_reading_and_binary_serving() {
         let temp_dir = TempDir::new().unwrap();
 
         // Create test PNG file with known content
-        let test_content = b"fake png data for base64 test";
+        let test_content = b"fake png data for binary test";
         let test_file = temp_dir.path().join("test.png");
         fs::write(&test_file, test_content).unwrap();
 
-        // Test file reading and base64 encoding
+        // Test file reading returns exact binary content
         if let Ok(file_contents) = tokio::fs::read(&test_file).await {
-            let base64_encoded = base64::engine::general_purpose::STANDARD.encode(&file_contents);
+            assert_eq!(file_contents.as_slice(), test_content);
 
-            // Verify we can decode back to original
-            let decoded = base64::engine::general_purpose::STANDARD
-                .decode(&base64_encoded)
-                .unwrap();
-            assert_eq!(decoded, test_content);
+            // Test that content is suitable for HTTP binary response
+            let bytes_content = bytes::Bytes::from(file_contents);
+            assert_eq!(bytes_content.len(), test_content.len());
+            assert_eq!(bytes_content.as_ref(), test_content);
 
-            // Test data URL format
-            let data_url = format!("data:image/png;base64,{}", base64_encoded);
-            assert!(data_url.starts_with("data:image/png;base64,"));
-
-            // Verify we can extract base64 part
-            let extracted_base64 = data_url.strip_prefix("data:image/png;base64,").unwrap();
-            assert_eq!(extracted_base64, base64_encoded);
+            // Verify binary content properties
+            assert!(!bytes_content.is_empty());
+            assert_eq!(bytes_content[0], test_content[0]); // First byte matches
         }
     }
 
