@@ -130,6 +130,32 @@ impl ScreenshotService {
         Ok(())
     }
 
+    /// Check if the browser is healthy and reinitialize if needed
+    async fn ensure_browser_healthy(&mut self) -> Result<(), ScreenshotError> {
+        // If no browser exists, initialize it
+        if self.browser.is_none() {
+            return self.initialize().await;
+        }
+
+        // Test if the existing browser is still functional by trying to create a tab
+        if let Some(ref browser) = self.browser {
+            match browser.new_tab() {
+                Ok(_) => {
+                    // Browser is healthy
+                    return Ok(());
+                }
+                Err(_) => {
+                    // Browser is unhealthy, reinitialize
+                    log::warn!("Browser connection is unhealthy, reinitializing...");
+                    self.browser = None;
+                    return self.initialize().await;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn configure_http_server(&mut self, port: u16, directory: String) {
         self.http_server_port = Some(port);
         self.http_server_directory = Some(directory);
@@ -241,8 +267,8 @@ impl ScreenshotService {
     ) -> Result<ScreenshotResponse, ScreenshotError> {
         let start_time = chrono::Utc::now();
 
-        // Ensure browser is initialized
-        self.initialize().await?;
+        // Ensure browser is healthy and reinitialize if needed
+        self.ensure_browser_healthy().await?;
 
         let browser = self.browser.as_ref().unwrap();
         let tab = browser.new_tab().map_err(|e| {
