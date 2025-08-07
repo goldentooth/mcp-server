@@ -1589,7 +1589,7 @@ async fn handle_screenshot_request(
 
         // Get screenshot directory from environment or default
         let directory = std::env::var("SCREENSHOT_DIRECTORY")
-            .unwrap_or_else(|_| "/tmp/screenshots".to_string());
+            .unwrap_or_else(|_| "/var/lib/goldentooth/screenshots".to_string());
         let file_path = std::path::Path::new(&directory).join(filename);
 
         // Additional security: ensure the resolved path is within the directory

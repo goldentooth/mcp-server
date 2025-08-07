@@ -476,7 +476,7 @@ impl GoldentoothService {
             dashboard_url,
             auth_config,
             true,
-            Some("/tmp/screenshots".to_string()),
+            Some("/var/lib/goldentooth/screenshots".to_string()),
             true,
             Some(Self::get_screenshot_base_url()),
         )
@@ -1373,7 +1373,7 @@ impl Service<RoleServer> for GoldentoothService {
                                 .and_then(|args| args.get("file_directory"))
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string())
-                                .unwrap_or_else(|| "/tmp/screenshots".to_string());
+                                .unwrap_or_else(|| "/var/lib/goldentooth/screenshots".to_string());
 
                             let http_serve = arguments
                                 .as_ref()

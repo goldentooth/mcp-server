@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Check for HTTP mode via environment variable or command line arg
     if env::var("MCP_HTTP_MODE").is_ok() || env::args().any(|arg| arg == "--http") {
         // HTTP server mode
-        let port = env::var("MCP_PORT").unwrap_or_else(|_| "8080".to_string());
+        let port = env::var("MCP_PORT").unwrap_or_else(|_| "32456".to_string());
         let addr = format!("0.0.0.0:{port}").parse()?;
 
         let http_server = HttpServer::new(service, auth_service);

@@ -87,10 +87,13 @@ pub struct ScreenshotService {
 
 impl ScreenshotService {
     pub fn new() -> Self {
+        let chrome_path =
+            std::env::var("CHROME_PATH").unwrap_or_else(|_| "/usr/bin/google-chrome".to_string());
+
         let options = LaunchOptions::default_builder()
             .headless(true)
             .window_size(Some((1920, 1080)))
-            .path(Some(std::path::PathBuf::from("/usr/bin/google-chrome")))
+            .path(Some(std::path::PathBuf::from(chrome_path)))
             .args(vec![
                 OsStr::new("--no-sandbox"),
                 OsStr::new("--disable-gpu"),
@@ -218,7 +221,7 @@ impl ScreenshotService {
             let directory = request
                 .file_directory
                 .as_deref()
-                .unwrap_or("/tmp/screenshots");
+                .unwrap_or("/var/lib/goldentooth/screenshots");
 
             // Create directory if it doesn't exist
             if let Err(e) = fs::create_dir_all(directory) {
