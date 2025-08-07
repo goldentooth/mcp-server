@@ -14,6 +14,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         wait_for_selector: None,
         wait_timeout_ms: Some(5000),
         authenticate: None,
+        save_to_file: Some(true),
+        file_directory: Some("/tmp/screenshots".to_string()),
     };
 
     println!("📸 Testing basic screenshot capture...");
@@ -39,6 +41,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "   - First 50 chars: {}",
                     &image_data[..50.min(image_data.len())]
                 );
+            }
+
+            if let Some(file_path) = &response.file_path {
+                println!("   - Saved to file: {file_path}");
+                if std::path::Path::new(file_path).exists() {
+                    println!("   - ✅ File verified on disk");
+                } else {
+                    println!("   - ❌ File not found on disk");
+                }
             }
         }
         Err(e) => {

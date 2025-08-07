@@ -1,4 +1,6 @@
 use std::ffi::OsStr;
+use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,6 +31,8 @@ pub struct ScreenshotRequest {
     pub wait_for_selector: Option<String>,
     pub wait_timeout_ms: Option<u64>,
     pub authenticate: Option<AuthConfig>,
+    pub save_to_file: Option<bool>,
+    pub file_directory: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -57,6 +61,7 @@ pub enum AuthMethod {
 pub struct ScreenshotResponse {
     pub success: bool,
     pub image_base64: Option<String>,
+    pub file_path: Option<String>,
     pub error: Option<String>,
     pub metadata: ScreenshotMetadata,
 }
@@ -163,11 +168,68 @@ impl ScreenshotService {
 
         let load_time_ms = (chrono::Utc::now() - start_time).num_milliseconds() as u64;
         let file_size_bytes = screenshot_data.len();
-        let image_base64 = base64::engine::general_purpose::STANDARD.encode(&screenshot_data);
+
+        let mut image_base64 = None;
+        let mut file_path = None;
+
+        if request.save_to_file.unwrap_or(false) {
+            // Save to file instead of returning base64
+            let directory = request
+                .file_directory
+                .as_deref()
+                .unwrap_or("/tmp/screenshots");
+
+            // Create directory if it doesn't exist
+            if let Err(e) = fs::create_dir_all(directory) {
+                return Ok(ScreenshotResponse {
+                    success: false,
+                    image_base64: None,
+                    file_path: None,
+                    error: Some(format!("Failed to create screenshot directory: {e}")),
+                    metadata: ScreenshotMetadata {
+                        url: request.url.clone(),
+                        timestamp: chrono::Utc::now(),
+                        width,
+                        height,
+                        file_size_bytes,
+                        load_time_ms,
+                    },
+                });
+            }
+
+            // Generate filename with timestamp
+            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f");
+            let filename = format!("screenshot_{timestamp}.png");
+            let full_path = Path::new(directory).join(&filename);
+
+            // Save screenshot to file
+            if let Err(e) = fs::write(&full_path, &screenshot_data) {
+                return Ok(ScreenshotResponse {
+                    success: false,
+                    image_base64: None,
+                    file_path: None,
+                    error: Some(format!("Failed to save screenshot: {e}")),
+                    metadata: ScreenshotMetadata {
+                        url: request.url.clone(),
+                        timestamp: chrono::Utc::now(),
+                        width,
+                        height,
+                        file_size_bytes,
+                        load_time_ms,
+                    },
+                });
+            }
+
+            file_path = Some(full_path.to_string_lossy().to_string());
+        } else {
+            // Return base64 encoded image (existing behavior)
+            image_base64 = Some(base64::engine::general_purpose::STANDARD.encode(&screenshot_data));
+        }
 
         Ok(ScreenshotResponse {
             success: true,
-            image_base64: Some(image_base64),
+            image_base64,
+            file_path,
             error: None,
             metadata: ScreenshotMetadata {
                 url: request.url.clone(),
@@ -315,6 +377,17 @@ impl ScreenshotService {
         dashboard_url: &str,
         auth_config: Option<AuthConfig>,
     ) -> Result<ScreenshotResponse, ScreenshotError> {
+        self.capture_dashboard_with_options(dashboard_url, auth_config, false, None)
+            .await
+    }
+
+    pub async fn capture_dashboard_with_options(
+        &mut self,
+        dashboard_url: &str,
+        auth_config: Option<AuthConfig>,
+        save_to_file: bool,
+        file_directory: Option<String>,
+    ) -> Result<ScreenshotResponse, ScreenshotError> {
         let request = ScreenshotRequest {
             url: dashboard_url.to_string(),
             width: Some(1920),
@@ -324,6 +397,8 @@ impl ScreenshotService {
             ),
             wait_timeout_ms: Some(15000),
             authenticate: auth_config,
+            save_to_file: Some(save_to_file),
+            file_directory,
         };
 
         self.capture_screenshot(request).await

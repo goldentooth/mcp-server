@@ -438,6 +438,7 @@ impl GoldentoothService {
                 Ok(response) => Ok(json!({
                     "success": response.success,
                     "image_base64": response.image_base64,
+                    "file_path": response.file_path,
                     "error": response.error,
                     "metadata": response.metadata,
                     "tool": "screenshot_url"
@@ -463,15 +464,33 @@ impl GoldentoothService {
         dashboard_url: &str,
         auth_config: Option<ScreenshotAuthConfig>,
     ) -> Result<Value, ErrorData> {
+        self.handle_screenshot_dashboard_with_options(dashboard_url, auth_config, true, None)
+            .await
+    }
+
+    #[allow(dead_code)]
+    pub async fn handle_screenshot_dashboard_with_options(
+        &self,
+        dashboard_url: &str,
+        auth_config: Option<ScreenshotAuthConfig>,
+        save_to_file: bool,
+        file_directory: Option<String>,
+    ) -> Result<Value, ErrorData> {
         if let Some(screenshot_service) = &self.screenshot_service {
             let mut screenshot_service_guard = screenshot_service.lock().await;
             match screenshot_service_guard
-                .capture_dashboard(dashboard_url, auth_config)
+                .capture_dashboard_with_options(
+                    dashboard_url,
+                    auth_config,
+                    save_to_file,
+                    file_directory,
+                )
                 .await
             {
                 Ok(response) => Ok(json!({
                     "success": response.success,
                     "image_base64": response.image_base64,
+                    "file_path": response.file_path,
                     "error": response.error,
                     "metadata": response.metadata,
                     "tool": "screenshot_dashboard"
@@ -1323,6 +1342,18 @@ impl Service<RoleServer> for GoldentoothService {
                                     serde_json::from_value::<ScreenshotAuthConfig>(v.clone()).ok()
                                 });
 
+                            let save_to_file = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("save_to_file"))
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(true); // Default to file mode to avoid large responses
+
+                            let file_directory = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("file_directory"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+
                             let request = ScreenshotRequest {
                                 url: url.to_string(),
                                 width,
@@ -1330,6 +1361,8 @@ impl Service<RoleServer> for GoldentoothService {
                                 wait_for_selector,
                                 wait_timeout_ms,
                                 authenticate: auth_config,
+                                save_to_file: Some(save_to_file),
+                                file_directory,
                             };
 
                             match self.handle_screenshot(request).await {
