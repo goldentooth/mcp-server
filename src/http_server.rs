@@ -1560,6 +1560,88 @@ fn parse_json_rpc_request(body: &[u8]) -> Result<Value, Box<Response<Full<Bytes>
     }
 }
 
+async fn handle_screenshot_request(
+    req: &Request<hyper::body::Incoming>,
+) -> Result<Response<Full<Bytes>>, std::convert::Infallible> {
+    let path = req.uri().path();
+
+    // Extract filename from /screenshots/{filename}
+    if let Some(filename) = path.strip_prefix("/screenshots/") {
+        // Security: Validate filename to prevent directory traversal
+        if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header("Content-Type", "application/json")
+                .header("Access-Control-Allow-Origin", "*")
+                .body(Full::new(Bytes::from(r#"{"error":"Invalid filename"}"#)))
+                .unwrap());
+        }
+
+        // Only allow PNG files
+        if !filename.ends_with(".png") {
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .header("Content-Type", "application/json")
+                .header("Access-Control-Allow-Origin", "*")
+                .body(Full::new(Bytes::from(r#"{"error":"File not found"}"#)))
+                .unwrap());
+        }
+
+        // Get screenshot directory from environment or default
+        let directory = std::env::var("SCREENSHOT_DIRECTORY")
+            .unwrap_or_else(|_| "/tmp/screenshots".to_string());
+        let file_path = std::path::Path::new(&directory).join(filename);
+
+        // Additional security: ensure the resolved path is within the directory
+        if let Ok(canonical_file) = file_path.canonicalize() {
+            if let Ok(canonical_dir) = std::path::Path::new(&directory).canonicalize() {
+                if !canonical_file.starts_with(&canonical_dir) {
+                    return Ok(Response::builder()
+                        .status(StatusCode::FORBIDDEN)
+                        .header("Content-Type", "application/json")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(Full::new(Bytes::from(r#"{"error":"Access denied"}"#)))
+                        .unwrap());
+                }
+            }
+        }
+
+        if file_path.exists() {
+            match tokio::fs::read(&file_path).await {
+                Ok(contents) => {
+                    println!(
+                        "📸 SCREENSHOT: Serving {filename} ({} bytes)",
+                        contents.len()
+                    );
+                    // Return raw binary PNG data with proper content type
+                    return Ok(Response::builder()
+                        .header("Content-Type", "image/png")
+                        .header("Cache-Control", "public, max-age=3600")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(Full::new(Bytes::from(contents)))
+                        .unwrap());
+                }
+                Err(e) => {
+                    println!("❌ SCREENSHOT: Failed to read {filename}: {e}");
+                    return Ok(Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .header("Content-Type", "application/json")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(Full::new(Bytes::from(r#"{"error":"Server error"}"#)))
+                        .unwrap());
+                }
+            }
+        }
+    }
+
+    Ok(Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .header("Content-Type", "application/json")
+        .header("Access-Control-Allow-Origin", "*")
+        .body(Full::new(Bytes::from(r#"{"error":"File not found"}"#)))
+        .unwrap())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2022,86 +2104,4 @@ mod tests {
         assert_eq!(content["type"], "text");
         assert!(content["text"].is_string());
     }
-}
-
-async fn handle_screenshot_request(
-    req: &Request<hyper::body::Incoming>,
-) -> Result<Response<Full<Bytes>>, std::convert::Infallible> {
-    let path = req.uri().path();
-
-    // Extract filename from /screenshots/{filename}
-    if let Some(filename) = path.strip_prefix("/screenshots/") {
-        // Security: Validate filename to prevent directory traversal
-        if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("Content-Type", "application/json")
-                .header("Access-Control-Allow-Origin", "*")
-                .body(Full::new(Bytes::from(r#"{"error":"Invalid filename"}"#)))
-                .unwrap());
-        }
-
-        // Only allow PNG files
-        if !filename.ends_with(".png") {
-            return Ok(Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .header("Content-Type", "application/json")
-                .header("Access-Control-Allow-Origin", "*")
-                .body(Full::new(Bytes::from(r#"{"error":"File not found"}"#)))
-                .unwrap());
-        }
-
-        // Get screenshot directory from environment or default
-        let directory = std::env::var("SCREENSHOT_DIRECTORY")
-            .unwrap_or_else(|_| "/tmp/screenshots".to_string());
-        let file_path = std::path::Path::new(&directory).join(filename);
-
-        // Additional security: ensure the resolved path is within the directory
-        if let Ok(canonical_file) = file_path.canonicalize() {
-            if let Ok(canonical_dir) = std::path::Path::new(&directory).canonicalize() {
-                if !canonical_file.starts_with(&canonical_dir) {
-                    return Ok(Response::builder()
-                        .status(StatusCode::FORBIDDEN)
-                        .header("Content-Type", "application/json")
-                        .header("Access-Control-Allow-Origin", "*")
-                        .body(Full::new(Bytes::from(r#"{"error":"Access denied"}"#)))
-                        .unwrap());
-                }
-            }
-        }
-
-        if file_path.exists() {
-            match tokio::fs::read(&file_path).await {
-                Ok(contents) => {
-                    println!(
-                        "📸 SCREENSHOT: Serving {filename} ({} bytes)",
-                        contents.len()
-                    );
-                    // Return raw binary PNG data with proper content type
-                    return Ok(Response::builder()
-                        .header("Content-Type", "image/png")
-                        .header("Cache-Control", "public, max-age=3600")
-                        .header("Access-Control-Allow-Origin", "*")
-                        .body(Full::new(Bytes::from(contents)))
-                        .unwrap());
-                }
-                Err(e) => {
-                    println!("❌ SCREENSHOT: Failed to read {filename}: {e}");
-                    return Ok(Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .header("Content-Type", "application/json")
-                        .header("Access-Control-Allow-Origin", "*")
-                        .body(Full::new(Bytes::from(r#"{"error":"Server error"}"#)))
-                        .unwrap());
-                }
-            }
-        }
-    }
-
-    Ok(Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .header("Content-Type", "application/json")
-        .header("Access-Control-Allow-Origin", "*")
-        .body(Full::new(Bytes::from(r#"{"error":"File not found"}"#)))
-        .unwrap())
 }
