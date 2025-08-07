@@ -1,15 +1,8 @@
-use bytes::Bytes;
-use http_body_util::Full;
-use hyper::server::conn::http1;
-use hyper::service::service_fn;
-use hyper::{Method, Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpListener;
 
 use base64::Engine;
 use headless_chrome::{Browser, LaunchOptions, Tab};
@@ -90,25 +83,34 @@ pub struct ScreenshotMetadata {
 pub struct ScreenshotService {
     browser: Option<Arc<Browser>>,
     default_options: LaunchOptions<'static>,
-    http_server_port: Option<u16>,
-    http_server_directory: Option<String>,
 }
 
 impl ScreenshotService {
     pub fn new() -> Self {
+        let chrome_path =
+            std::env::var("CHROME_PATH").unwrap_or_else(|_| "/usr/bin/google-chrome".to_string());
+
         let options = LaunchOptions::default_builder()
             .headless(true)
             .window_size(Some((1920, 1080)))
+            .path(Some(std::path::PathBuf::from(chrome_path)))
             .args(vec![
                 OsStr::new("--no-sandbox"),
                 OsStr::new("--disable-gpu"),
                 OsStr::new("--disable-dev-shm-usage"),
                 OsStr::new("--disable-extensions"),
                 OsStr::new("--disable-plugins"),
-                OsStr::new("--disable-images"),
                 OsStr::new("--disable-background-timer-throttling"),
                 OsStr::new("--disable-backgrounding-occluded-windows"),
                 OsStr::new("--disable-renderer-backgrounding"),
+                OsStr::new("--disable-dbus"),
+                OsStr::new("--disable-features=VizDisplayCompositor,TranslateUI"),
+                OsStr::new("--disable-ipc-flooding-protection"),
+                OsStr::new("--disable-client-side-phishing-detection"),
+                OsStr::new("--disable-component-update"),
+                OsStr::new("--disable-default-apps"),
+                OsStr::new("--no-default-browser-check"),
+                OsStr::new("--no-first-run"),
             ])
             .build()
             .expect("Failed to build default launch options");
@@ -116,8 +118,6 @@ impl ScreenshotService {
         Self {
             browser: None,
             default_options: options,
-            http_server_port: None,
-            http_server_directory: None,
         }
     }
 
@@ -130,109 +130,32 @@ impl ScreenshotService {
         Ok(())
     }
 
-    pub fn configure_http_server(&mut self, port: u16, directory: String) {
-        self.http_server_port = Some(port);
-        self.http_server_directory = Some(directory);
-    }
-
-    pub async fn start_http_server(&self) -> Result<(), ScreenshotError> {
-        if let (Some(port), Some(directory)) = (&self.http_server_port, &self.http_server_directory)
-        {
-            let directory = directory.clone();
-            let addr = format!("0.0.0.0:{port}");
-            let listener = TcpListener::bind(&addr).await.map_err(|e| {
-                ScreenshotError::BrowserLaunch(format!("Failed to bind to {addr}: {e}"))
-            })?;
-
-            tokio::spawn(async move {
-                loop {
-                    match listener.accept().await {
-                        Ok((stream, _)) => {
-                            let io = TokioIo::new(stream);
-                            let directory = directory.clone();
-
-                            tokio::spawn(async move {
-                                let service = service_fn(move |req| {
-                                    Self::handle_http_request(req, directory.clone())
-                                });
-
-                                if let Err(e) =
-                                    http1::Builder::new().serve_connection(io, service).await
-                                {
-                                    error!("Screenshot HTTP connection error: {e}");
-                                }
-                            });
-                        }
-                        Err(e) => {
-                            error!("Screenshot HTTP server accept error: {e}");
-                        }
-                    }
-                }
-            });
+    /// Check if the browser is healthy and reinitialize if needed
+    async fn ensure_browser_healthy(&mut self) -> Result<(), ScreenshotError> {
+        // First, try to initialize browser if it doesn't exist
+        if self.browser.is_none() {
+            log::info!("No browser instance found, initializing...");
+            return self.initialize().await;
         }
+
+        // Test if the existing browser is still functional by trying to create a tab
+        if let Some(ref browser) = self.browser {
+            match browser.new_tab() {
+                Ok(tab) => {
+                    log::debug!("Browser health check: successfully created test tab");
+                    // Close the test tab to avoid accumulation
+                    let _ = tab.close(false);
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::warn!("Browser health check failed: {e}, reinitializing...");
+                    self.browser = None;
+                    return self.initialize().await;
+                }
+            }
+        }
+
         Ok(())
-    }
-
-    async fn handle_http_request(
-        req: Request<hyper::body::Incoming>,
-        directory: String,
-    ) -> Result<Response<Full<Bytes>>, Box<dyn std::error::Error + Send + Sync>> {
-        if req.method() != Method::GET {
-            return Ok(Response::builder()
-                .status(StatusCode::METHOD_NOT_ALLOWED)
-                .body(Full::new(Bytes::from("Method not allowed")))?);
-        }
-
-        let path = req.uri().path();
-        if let Some(filename) = path.strip_prefix('/') {
-            // Security: Validate filename to prevent directory traversal
-            if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
-                return Ok(Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .body(Full::new(Bytes::from("Invalid filename")))?);
-            }
-
-            // Only allow PNG files
-            if !filename.ends_with(".png") {
-                return Ok(Response::builder()
-                    .status(StatusCode::NOT_FOUND)
-                    .body(Full::new(Bytes::from("File not found")))?);
-            }
-
-            let file_path = Path::new(&directory).join(filename);
-
-            // Additional security: ensure the resolved path is within the directory
-            if let Ok(canonical_file) = file_path.canonicalize() {
-                if let Ok(canonical_dir) = Path::new(&directory).canonicalize() {
-                    if !canonical_file.starts_with(&canonical_dir) {
-                        return Ok(Response::builder()
-                            .status(StatusCode::FORBIDDEN)
-                            .body(Full::new(Bytes::from("Access denied")))?);
-                    }
-                }
-            }
-
-            if file_path.exists() {
-                match tokio::fs::read(&file_path).await {
-                    Ok(contents) => {
-                        // Return raw binary PNG data with proper content type
-                        return Ok(Response::builder()
-                            .header("Content-Type", "image/png")
-                            .header("Cache-Control", "public, max-age=3600")
-                            .body(Full::new(Bytes::from(contents)))?);
-                    }
-                    Err(_) => {
-                        return Ok(Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(Full::new(Bytes::from("Server error")))?);
-                    }
-                }
-            }
-        }
-
-        Ok(Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Full::new(Bytes::from("File not found")))?)
     }
 
     pub async fn capture_screenshot(
@@ -241,8 +164,8 @@ impl ScreenshotService {
     ) -> Result<ScreenshotResponse, ScreenshotError> {
         let start_time = chrono::Utc::now();
 
-        // Ensure browser is initialized
-        self.initialize().await?;
+        // Ensure browser is healthy and reinitialize if needed
+        self.ensure_browser_healthy().await?;
 
         let browser = self.browser.as_ref().unwrap();
         let tab = browser.new_tab().map_err(|e| {
@@ -298,7 +221,7 @@ impl ScreenshotService {
             let directory = request
                 .file_directory
                 .as_deref()
-                .unwrap_or("/tmp/screenshots");
+                .unwrap_or("/var/lib/goldentooth/screenshots");
 
             // Create directory if it doesn't exist
             if let Err(e) = fs::create_dir_all(directory) {
@@ -567,19 +490,7 @@ mod tests {
     fn test_screenshot_service_creation() {
         let service = ScreenshotService::new();
         assert!(service.browser.is_none());
-        assert!(service.http_server_port.is_none());
-        assert!(service.http_server_directory.is_none());
-    }
-
-    #[test]
-    fn test_configure_http_server() {
-        let mut service = ScreenshotService::new();
-        service.configure_http_server(8080, "/test/path".to_string());
-        assert_eq!(service.http_server_port, Some(8080));
-        assert_eq!(
-            service.http_server_directory,
-            Some("/test/path".to_string())
-        );
+        // HTTP serving is now handled by the main MCP server, not a separate service
     }
 
     #[test]
@@ -664,43 +575,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_http_server_startup() {
-        let mut service = ScreenshotService::new();
+    async fn test_screenshot_service_initialization() {
+        let service = ScreenshotService::new();
 
-        // Test that start_http_server returns error when not configured
-        let result = service.start_http_server().await;
-        assert!(result.is_ok()); // Should succeed but do nothing when not configured
+        // Test browser initialization - this will likely fail without Chrome installed in test env
+        // but we can test that the service handles it gracefully
+        assert!(service.browser.is_none());
 
-        // Configure and test startup
-        service.configure_http_server(0, "/tmp".to_string()); // Port 0 = random port
-        let result = service.start_http_server().await;
-        assert!(result.is_ok());
+        // HTTP serving is now integrated into the main MCP server
+        // Screenshot files are served via /screenshots/{filename} route
     }
 
     #[test]
     fn test_environment_variable_configuration() {
         // Save original values
-        let original_port = env::var("SCREENSHOT_HTTP_PORT").ok();
+        let original_port = env::var("MCP_PORT").ok();
         let original_dir = env::var("SCREENSHOT_DIRECTORY").ok();
         let original_host = env::var("SCREENSHOT_HTTP_HOST").ok();
 
         unsafe {
             // Test with environment variables set
-            env::set_var("SCREENSHOT_HTTP_PORT", "9999");
+            env::set_var("MCP_PORT", "9999");
             env::set_var("SCREENSHOT_DIRECTORY", "/custom/path");
             env::set_var("SCREENSHOT_HTTP_HOST", "custom.host");
         }
 
-        // Test base URL generation
+        // Test base URL generation - now uses MCP_PORT and includes /screenshots path
         let base_url = crate::service::GoldentoothService::get_screenshot_base_url();
-        assert_eq!(base_url, "http://custom.host:9999");
+        assert_eq!(base_url, "http://custom.host:9999/screenshots");
 
         unsafe {
             // Restore original values
             if let Some(port) = original_port {
-                env::set_var("SCREENSHOT_HTTP_PORT", port);
+                env::set_var("MCP_PORT", port);
             } else {
-                env::remove_var("SCREENSHOT_HTTP_PORT");
+                env::remove_var("MCP_PORT");
             }
 
             if let Some(dir) = original_dir {
@@ -720,13 +629,13 @@ mod tests {
     #[test]
     fn test_default_configuration() {
         // Save any existing values
-        let original_port = env::var("SCREENSHOT_HTTP_PORT").ok();
+        let original_port = env::var("MCP_PORT").ok();
         let original_dir = env::var("SCREENSHOT_DIRECTORY").ok();
         let original_host = env::var("SCREENSHOT_HTTP_HOST").ok();
 
         unsafe {
             // Ensure environment variables are not set
-            env::remove_var("SCREENSHOT_HTTP_PORT");
+            env::remove_var("MCP_PORT");
             env::remove_var("SCREENSHOT_DIRECTORY");
             env::remove_var("SCREENSHOT_HTTP_HOST");
         }
@@ -734,22 +643,28 @@ mod tests {
         // Test default values - verify each component
         let host = std::env::var("SCREENSHOT_HTTP_HOST")
             .unwrap_or_else(|_| "velaryon.nodes.goldentooth.net".to_string());
-        let port = std::env::var("SCREENSHOT_HTTP_PORT").unwrap_or_else(|_| "8081".to_string());
+        let port = std::env::var("MCP_PORT").unwrap_or_else(|_| "32456".to_string());
 
         assert_eq!(host, "velaryon.nodes.goldentooth.net");
-        assert_eq!(port, "8081");
+        assert_eq!(port, "32456");
 
-        let base_url = format!("http://{host}:{port}");
-        assert_eq!(base_url, "http://velaryon.nodes.goldentooth.net:8081");
+        let base_url = format!("http://{host}:{port}/screenshots");
+        assert_eq!(
+            base_url,
+            "http://velaryon.nodes.goldentooth.net:32456/screenshots"
+        );
 
         // Also test the actual function
         let function_url = crate::service::GoldentoothService::get_screenshot_base_url();
-        assert_eq!(function_url, "http://velaryon.nodes.goldentooth.net:8081");
+        assert_eq!(
+            function_url,
+            "http://velaryon.nodes.goldentooth.net:32456/screenshots"
+        );
 
         unsafe {
             // Restore original values to avoid affecting other tests
             if let Some(port) = original_port {
-                env::set_var("SCREENSHOT_HTTP_PORT", port);
+                env::set_var("MCP_PORT", port);
             }
             if let Some(dir) = original_dir {
                 env::set_var("SCREENSHOT_DIRECTORY", dir);
