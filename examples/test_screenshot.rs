@@ -16,6 +16,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         authenticate: None,
         save_to_file: Some(true),
         file_directory: Some("/tmp/screenshots".to_string()),
+        http_serve: Some(true),
+        http_base_url: Some("http://localhost:8081".to_string()),
     };
 
     println!("📸 Testing basic screenshot capture...");
@@ -50,6 +52,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     println!("   - ❌ File not found on disk");
                 }
+            }
+
+            if let Some(screenshot_url) = &response.screenshot_url {
+                println!("   - Available via HTTP: {screenshot_url}");
             }
         }
         Err(e) => {

@@ -100,6 +100,20 @@ impl GoldentoothService {
         }
     }
 
+    pub async fn initialize_http_server(
+        &self,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(screenshot_service) = &self.screenshot_service {
+            let mut service_guard = screenshot_service.lock().await;
+            service_guard.configure_http_server(8081, "/tmp/screenshots".to_string());
+            service_guard
+                .start_http_server()
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        }
+        Ok(())
+    }
+
     pub async fn with_auth() -> Result<(Self, AuthService), AuthError> {
         let auth_config = AuthConfig::default();
         let mut auth_service = AuthService::new(auth_config);
@@ -439,6 +453,7 @@ impl GoldentoothService {
                     "success": response.success,
                     "image_base64": response.image_base64,
                     "file_path": response.file_path,
+                    "screenshot_url": response.screenshot_url,
                     "error": response.error,
                     "metadata": response.metadata,
                     "tool": "screenshot_url"
@@ -464,8 +479,15 @@ impl GoldentoothService {
         dashboard_url: &str,
         auth_config: Option<ScreenshotAuthConfig>,
     ) -> Result<Value, ErrorData> {
-        self.handle_screenshot_dashboard_with_options(dashboard_url, auth_config, true, None)
-            .await
+        self.handle_screenshot_dashboard_with_options(
+            dashboard_url,
+            auth_config,
+            true,
+            Some("/tmp/screenshots".to_string()),
+            true,
+            Some("http://velaryon.nodes.goldentooth.net:8081".to_string()),
+        )
+        .await
     }
 
     #[allow(dead_code)]
@@ -475,6 +497,8 @@ impl GoldentoothService {
         auth_config: Option<ScreenshotAuthConfig>,
         save_to_file: bool,
         file_directory: Option<String>,
+        http_serve: bool,
+        http_base_url: Option<String>,
     ) -> Result<Value, ErrorData> {
         if let Some(screenshot_service) = &self.screenshot_service {
             let mut screenshot_service_guard = screenshot_service.lock().await;
@@ -484,6 +508,8 @@ impl GoldentoothService {
                     auth_config,
                     save_to_file,
                     file_directory,
+                    http_serve,
+                    http_base_url,
                 )
                 .await
             {
@@ -491,6 +517,7 @@ impl GoldentoothService {
                     "success": response.success,
                     "image_base64": response.image_base64,
                     "file_path": response.file_path,
+                    "screenshot_url": response.screenshot_url,
                     "error": response.error,
                     "metadata": response.metadata,
                     "tool": "screenshot_dashboard"
@@ -1352,7 +1379,20 @@ impl Service<RoleServer> for GoldentoothService {
                                 .as_ref()
                                 .and_then(|args| args.get("file_directory"))
                                 .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "/tmp/screenshots".to_string());
+
+                            let http_serve = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("http_serve"))
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(true); // Default to HTTP serving
+
+                            let http_base_url = if http_serve {
+                                Some("http://velaryon.nodes.goldentooth.net:8081".to_string())
+                            } else {
+                                None
+                            };
 
                             let request = ScreenshotRequest {
                                 url: url.to_string(),
@@ -1362,7 +1402,9 @@ impl Service<RoleServer> for GoldentoothService {
                                 wait_timeout_ms,
                                 authenticate: auth_config,
                                 save_to_file: Some(save_to_file),
-                                file_directory,
+                                file_directory: Some(file_directory),
+                                http_serve: Some(http_serve),
+                                http_base_url,
                             };
 
                             match self.handle_screenshot(request).await {

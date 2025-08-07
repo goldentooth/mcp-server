@@ -1,8 +1,13 @@
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Method, Request, Response, StatusCode};
+use hyper_util::rt::TokioIo;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::net::TcpListener;
 
 use base64::Engine;
 use headless_chrome::{Browser, LaunchOptions, Tab};
@@ -33,6 +38,8 @@ pub struct ScreenshotRequest {
     pub authenticate: Option<AuthConfig>,
     pub save_to_file: Option<bool>,
     pub file_directory: Option<String>,
+    pub http_serve: Option<bool>,
+    pub http_base_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -62,6 +69,7 @@ pub struct ScreenshotResponse {
     pub success: bool,
     pub image_base64: Option<String>,
     pub file_path: Option<String>,
+    pub screenshot_url: Option<String>,
     pub error: Option<String>,
     pub metadata: ScreenshotMetadata,
 }
@@ -79,6 +87,8 @@ pub struct ScreenshotMetadata {
 pub struct ScreenshotService {
     browser: Option<Arc<Browser>>,
     default_options: LaunchOptions<'static>,
+    http_server_port: Option<u16>,
+    http_server_directory: Option<String>,
 }
 
 impl ScreenshotService {
@@ -103,6 +113,8 @@ impl ScreenshotService {
         Self {
             browser: None,
             default_options: options,
+            http_server_port: None,
+            http_server_directory: None,
         }
     }
 
@@ -113,6 +125,88 @@ impl ScreenshotService {
             self.browser = Some(Arc::new(browser));
         }
         Ok(())
+    }
+
+    pub fn configure_http_server(&mut self, port: u16, directory: String) {
+        self.http_server_port = Some(port);
+        self.http_server_directory = Some(directory);
+    }
+
+    pub async fn start_http_server(&self) -> Result<(), ScreenshotError> {
+        if let (Some(port), Some(directory)) = (&self.http_server_port, &self.http_server_directory)
+        {
+            let directory = directory.clone();
+            let addr = format!("0.0.0.0:{port}");
+            let listener = TcpListener::bind(&addr).await.map_err(|e| {
+                ScreenshotError::BrowserLaunch(format!("Failed to bind to {addr}: {e}"))
+            })?;
+
+            tokio::spawn(async move {
+                loop {
+                    match listener.accept().await {
+                        Ok((stream, _)) => {
+                            let io = TokioIo::new(stream);
+                            let directory = directory.clone();
+
+                            tokio::spawn(async move {
+                                let service = service_fn(move |req| {
+                                    Self::handle_http_request(req, directory.clone())
+                                });
+
+                                if let Err(e) =
+                                    http1::Builder::new().serve_connection(io, service).await
+                                {
+                                    eprintln!("Screenshot HTTP connection error: {e}");
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            eprintln!("Screenshot HTTP server accept error: {e}");
+                        }
+                    }
+                }
+            });
+        }
+        Ok(())
+    }
+
+    async fn handle_http_request(
+        req: Request<hyper::body::Incoming>,
+        directory: String,
+    ) -> Result<Response<String>, Box<dyn std::error::Error + Send + Sync>> {
+        if req.method() != Method::GET {
+            return Ok(Response::builder()
+                .status(StatusCode::METHOD_NOT_ALLOWED)
+                .body("Method not allowed".to_string())?);
+        }
+
+        let path = req.uri().path();
+        if let Some(filename) = path.strip_prefix('/') {
+            let file_path = Path::new(&directory).join(filename);
+
+            if file_path.exists() && filename.ends_with(".png") {
+                match fs::read(&file_path) {
+                    Ok(contents) => {
+                        // For PNG files, we need to return binary data as base64 or use a different approach
+                        let base64_content =
+                            base64::engine::general_purpose::STANDARD.encode(&contents);
+                        return Ok(Response::builder()
+                            .header("Content-Type", "text/plain")
+                            .header("Cache-Control", "public, max-age=3600")
+                            .body(format!("data:image/png;base64,{base64_content}"))?);
+                    }
+                    Err(_) => {
+                        return Ok(Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body("Failed to read file".to_string())?);
+                    }
+                }
+            }
+        }
+
+        Ok(Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body("Screenshot not found".to_string())?)
     }
 
     pub async fn capture_screenshot(
@@ -171,6 +265,7 @@ impl ScreenshotService {
 
         let mut image_base64 = None;
         let mut file_path = None;
+        let mut screenshot_url = None;
 
         if request.save_to_file.unwrap_or(false) {
             // Save to file instead of returning base64
@@ -185,6 +280,7 @@ impl ScreenshotService {
                     success: false,
                     image_base64: None,
                     file_path: None,
+                    screenshot_url: None,
                     error: Some(format!("Failed to create screenshot directory: {e}")),
                     metadata: ScreenshotMetadata {
                         url: request.url.clone(),
@@ -208,6 +304,7 @@ impl ScreenshotService {
                     success: false,
                     image_base64: None,
                     file_path: None,
+                    screenshot_url: None,
                     error: Some(format!("Failed to save screenshot: {e}")),
                     metadata: ScreenshotMetadata {
                         url: request.url.clone(),
@@ -221,6 +318,13 @@ impl ScreenshotService {
             }
 
             file_path = Some(full_path.to_string_lossy().to_string());
+
+            // Generate HTTP URL if HTTP serving is enabled
+            if request.http_serve.unwrap_or(false) {
+                if let Some(base_url) = &request.http_base_url {
+                    screenshot_url = Some(format!("{base_url}/{filename}"));
+                }
+            }
         } else {
             // Return base64 encoded image (existing behavior)
             image_base64 = Some(base64::engine::general_purpose::STANDARD.encode(&screenshot_data));
@@ -230,6 +334,7 @@ impl ScreenshotService {
             success: true,
             image_base64,
             file_path,
+            screenshot_url,
             error: None,
             metadata: ScreenshotMetadata {
                 url: request.url.clone(),
@@ -377,7 +482,7 @@ impl ScreenshotService {
         dashboard_url: &str,
         auth_config: Option<AuthConfig>,
     ) -> Result<ScreenshotResponse, ScreenshotError> {
-        self.capture_dashboard_with_options(dashboard_url, auth_config, false, None)
+        self.capture_dashboard_with_options(dashboard_url, auth_config, false, None, false, None)
             .await
     }
 
@@ -387,6 +492,8 @@ impl ScreenshotService {
         auth_config: Option<AuthConfig>,
         save_to_file: bool,
         file_directory: Option<String>,
+        http_serve: bool,
+        http_base_url: Option<String>,
     ) -> Result<ScreenshotResponse, ScreenshotError> {
         let request = ScreenshotRequest {
             url: dashboard_url.to_string(),
@@ -399,6 +506,8 @@ impl ScreenshotService {
             authenticate: auth_config,
             save_to_file: Some(save_to_file),
             file_directory,
+            http_serve: Some(http_serve),
+            http_base_url,
         };
 
         self.capture_screenshot(request).await
