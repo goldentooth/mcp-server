@@ -13,6 +13,7 @@ use tokio::net::TcpListener;
 
 use base64::Engine;
 use headless_chrome::{Browser, LaunchOptions, Tab};
+use log::error;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -158,12 +159,12 @@ impl ScreenshotService {
                                 if let Err(e) =
                                     http1::Builder::new().serve_connection(io, service).await
                                 {
-                                    eprintln!("Screenshot HTTP connection error: {e}");
+                                    error!("Screenshot HTTP connection error: {e}");
                                 }
                             });
                         }
                         Err(e) => {
-                            eprintln!("Screenshot HTTP server accept error: {e}");
+                            error!("Screenshot HTTP server accept error: {e}");
                         }
                     }
                 }
@@ -745,8 +746,8 @@ mod tests {
         let function_url = crate::service::GoldentoothService::get_screenshot_base_url();
         assert_eq!(function_url, "http://velaryon.nodes.goldentooth.net:8081");
 
-        // Restore original values to avoid affecting other tests
         unsafe {
+            // Restore original values to avoid affecting other tests
             if let Some(port) = original_port {
                 env::set_var("SCREENSHOT_HTTP_PORT", port);
             }

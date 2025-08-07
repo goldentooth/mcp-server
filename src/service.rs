@@ -1405,7 +1405,7 @@ impl Service<RoleServer> for GoldentoothService {
                                 .unwrap_or(true); // Default to HTTP serving
 
                             let http_base_url = if http_serve {
-                                Some("http://velaryon.nodes.goldentooth.net:8081".to_string())
+                                Some(Self::get_screenshot_base_url())
                             } else {
                                 None
                             };
