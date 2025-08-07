@@ -51,7 +51,7 @@ impl Default for GoldentoothService {
 }
 
 impl GoldentoothService {
-    fn get_screenshot_base_url() -> String {
+    pub fn get_screenshot_base_url() -> String {
         let host = std::env::var("SCREENSHOT_HTTP_HOST")
             .unwrap_or_else(|_| "velaryon.nodes.goldentooth.net".to_string());
         let port = std::env::var("SCREENSHOT_HTTP_PORT").unwrap_or_else(|_| "8081".to_string());

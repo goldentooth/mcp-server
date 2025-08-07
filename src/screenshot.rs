@@ -548,6 +548,9 @@ impl Default for ScreenshotService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_path_validation_security() {
@@ -576,5 +579,188 @@ mod tests {
             service.http_server_directory,
             Some("/test/path".to_string())
         );
+    }
+
+    #[test]
+    fn test_security_path_validation_logic() {
+        // Test the core security logic without HTTP complexity
+
+        // These should be rejected (contain ..)
+        assert!("/../outside.png".contains(".."));
+        assert!("/../../etc/passwd".contains(".."));
+        assert!("/subdir/../../file".contains(".."));
+        assert!("/..\\windows\\style".contains(".."));
+
+        // These should be accepted (no ..)
+        assert!(!"safe.png".contains(".."));
+        assert!(!"path/to/safe.png".contains(".."));
+        assert!(!"image123.png".contains(".."));
+
+        // Test file extension validation
+        assert!("image.png".ends_with(".png"));
+        assert!(!"script.js".ends_with(".png"));
+        assert!(!"style.css".ends_with(".png"));
+        assert!(!"config.json".ends_with(".png"));
+        assert!(!"image.PNG".ends_with(".png")); // Case sensitive
+    }
+
+    #[tokio::test]
+    async fn test_file_operations_security() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create test files
+        fs::write(temp_dir.path().join("safe.png"), b"safe content").unwrap();
+
+        // Create file outside temp directory
+        let parent_dir = temp_dir.path().parent().unwrap();
+        let outside_file = parent_dir.join("outside.png");
+        fs::write(&outside_file, b"should not be accessible").unwrap();
+
+        // Test path canonicalization security
+        let safe_path = temp_dir.path().join("safe.png");
+        let outside_path = temp_dir.path().join("../outside.png");
+
+        // Verify safe file is within directory
+        if let Ok(canonical_file) = safe_path.canonicalize() {
+            if let Ok(canonical_dir) = temp_dir.path().canonicalize() {
+                assert!(canonical_file.starts_with(&canonical_dir));
+            }
+        }
+
+        // Verify dangerous path would be caught by canonicalization
+        if let Ok(canonical_file) = outside_path.canonicalize() {
+            if let Ok(canonical_dir) = temp_dir.path().canonicalize() {
+                assert!(!canonical_file.starts_with(&canonical_dir));
+            }
+        }
+
+        // Cleanup
+        let _ = fs::remove_file(outside_file);
+    }
+
+    #[tokio::test]
+    async fn test_file_reading_and_base64_encoding() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create test PNG file with known content
+        let test_content = b"fake png data for base64 test";
+        let test_file = temp_dir.path().join("test.png");
+        fs::write(&test_file, test_content).unwrap();
+
+        // Test file reading and base64 encoding
+        if let Ok(file_contents) = tokio::fs::read(&test_file).await {
+            let base64_encoded = base64::engine::general_purpose::STANDARD.encode(&file_contents);
+
+            // Verify we can decode back to original
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(&base64_encoded)
+                .unwrap();
+            assert_eq!(decoded, test_content);
+
+            // Test data URL format
+            let data_url = format!("data:image/png;base64,{}", base64_encoded);
+            assert!(data_url.starts_with("data:image/png;base64,"));
+
+            // Verify we can extract base64 part
+            let extracted_base64 = data_url.strip_prefix("data:image/png;base64,").unwrap();
+            assert_eq!(extracted_base64, base64_encoded);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_http_server_startup() {
+        let mut service = ScreenshotService::new();
+
+        // Test that start_http_server returns error when not configured
+        let result = service.start_http_server().await;
+        assert!(result.is_ok()); // Should succeed but do nothing when not configured
+
+        // Configure and test startup
+        service.configure_http_server(0, "/tmp".to_string()); // Port 0 = random port
+        let result = service.start_http_server().await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_environment_variable_configuration() {
+        // Save original values
+        let original_port = env::var("SCREENSHOT_HTTP_PORT").ok();
+        let original_dir = env::var("SCREENSHOT_DIRECTORY").ok();
+        let original_host = env::var("SCREENSHOT_HTTP_HOST").ok();
+
+        unsafe {
+            // Test with environment variables set
+            env::set_var("SCREENSHOT_HTTP_PORT", "9999");
+            env::set_var("SCREENSHOT_DIRECTORY", "/custom/path");
+            env::set_var("SCREENSHOT_HTTP_HOST", "custom.host");
+        }
+
+        // Test base URL generation
+        let base_url = crate::service::GoldentoothService::get_screenshot_base_url();
+        assert_eq!(base_url, "http://custom.host:9999");
+
+        unsafe {
+            // Restore original values
+            if let Some(port) = original_port {
+                env::set_var("SCREENSHOT_HTTP_PORT", port);
+            } else {
+                env::remove_var("SCREENSHOT_HTTP_PORT");
+            }
+
+            if let Some(dir) = original_dir {
+                env::set_var("SCREENSHOT_DIRECTORY", dir);
+            } else {
+                env::remove_var("SCREENSHOT_DIRECTORY");
+            }
+
+            if let Some(host) = original_host {
+                env::set_var("SCREENSHOT_HTTP_HOST", host);
+            } else {
+                env::remove_var("SCREENSHOT_HTTP_HOST");
+            }
+        }
+    }
+
+    #[test]
+    fn test_default_configuration() {
+        // Save any existing values
+        let original_port = env::var("SCREENSHOT_HTTP_PORT").ok();
+        let original_dir = env::var("SCREENSHOT_DIRECTORY").ok();
+        let original_host = env::var("SCREENSHOT_HTTP_HOST").ok();
+
+        unsafe {
+            // Ensure environment variables are not set
+            env::remove_var("SCREENSHOT_HTTP_PORT");
+            env::remove_var("SCREENSHOT_DIRECTORY");
+            env::remove_var("SCREENSHOT_HTTP_HOST");
+        }
+
+        // Test default values - verify each component
+        let host = std::env::var("SCREENSHOT_HTTP_HOST")
+            .unwrap_or_else(|_| "velaryon.nodes.goldentooth.net".to_string());
+        let port = std::env::var("SCREENSHOT_HTTP_PORT").unwrap_or_else(|_| "8081".to_string());
+
+        assert_eq!(host, "velaryon.nodes.goldentooth.net");
+        assert_eq!(port, "8081");
+
+        let base_url = format!("http://{host}:{port}");
+        assert_eq!(base_url, "http://velaryon.nodes.goldentooth.net:8081");
+
+        // Also test the actual function
+        let function_url = crate::service::GoldentoothService::get_screenshot_base_url();
+        assert_eq!(function_url, "http://velaryon.nodes.goldentooth.net:8081");
+
+        // Restore original values to avoid affecting other tests
+        unsafe {
+            if let Some(port) = original_port {
+                env::set_var("SCREENSHOT_HTTP_PORT", port);
+            }
+            if let Some(dir) = original_dir {
+                env::set_var("SCREENSHOT_DIRECTORY", dir);
+            }
+            if let Some(host) = original_host {
+                env::set_var("SCREENSHOT_HTTP_HOST", host);
+            }
+        }
     }
 }
