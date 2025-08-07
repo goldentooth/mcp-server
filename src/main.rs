@@ -28,6 +28,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (GoldentoothService::new(), None)
     };
 
+    // Initialize screenshot HTTP server
+    if let Err(e) = service.initialize_http_server().await {
+        eprintln!("Failed to initialize screenshot HTTP server: {e}");
+        eprintln!("Screenshots will still work but won't be served via HTTP");
+    } else {
+        let port = std::env::var("SCREENSHOT_HTTP_PORT").unwrap_or_else(|_| "8081".to_string());
+        println!("Screenshot HTTP server initialized on port {port}");
+    }
+
     // Check for HTTP mode via environment variable or command line arg
     if env::var("MCP_HTTP_MODE").is_ok() || env::args().any(|arg| arg == "--http") {
         // HTTP server mode

@@ -51,6 +51,12 @@ impl Default for GoldentoothService {
 }
 
 impl GoldentoothService {
+    pub fn get_screenshot_base_url() -> String {
+        let host = std::env::var("SCREENSHOT_HTTP_HOST")
+            .unwrap_or_else(|_| "velaryon.nodes.goldentooth.net".to_string());
+        let port = std::env::var("SCREENSHOT_HTTP_PORT").unwrap_or_else(|_| "8081".to_string());
+        format!("http://{host}:{port}")
+    }
     /// Extract the base tool name from a potentially prefixed tool name.
     /// MCP clients may prefix tool names with server identifiers like "mcp__goldentooth_mcp__".
     /// This function extracts the actual tool name after the last "__" separator.
@@ -98,6 +104,30 @@ impl GoldentoothService {
             vector_service: None,
             screenshot_service: Some(Arc::new(Mutex::new(ScreenshotService::new()))),
         }
+    }
+
+    pub async fn initialize_http_server(
+        &self,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(screenshot_service) = &self.screenshot_service {
+            let mut service_guard = screenshot_service.lock().await;
+
+            // Configure HTTP server with environment variables or defaults
+            let port = std::env::var("SCREENSHOT_HTTP_PORT")
+                .unwrap_or_else(|_| "8081".to_string())
+                .parse::<u16>()
+                .unwrap_or(8081);
+
+            let directory = std::env::var("SCREENSHOT_DIRECTORY")
+                .unwrap_or_else(|_| "/tmp/screenshots".to_string());
+
+            service_guard.configure_http_server(port, directory);
+            service_guard
+                .start_http_server()
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        }
+        Ok(())
     }
 
     pub async fn with_auth() -> Result<(Self, AuthService), AuthError> {
@@ -438,6 +468,8 @@ impl GoldentoothService {
                 Ok(response) => Ok(json!({
                     "success": response.success,
                     "image_base64": response.image_base64,
+                    "file_path": response.file_path,
+                    "screenshot_url": response.screenshot_url,
                     "error": response.error,
                     "metadata": response.metadata,
                     "tool": "screenshot_url"
@@ -463,15 +495,45 @@ impl GoldentoothService {
         dashboard_url: &str,
         auth_config: Option<ScreenshotAuthConfig>,
     ) -> Result<Value, ErrorData> {
+        self.handle_screenshot_dashboard_with_options(
+            dashboard_url,
+            auth_config,
+            true,
+            Some("/tmp/screenshots".to_string()),
+            true,
+            Some(Self::get_screenshot_base_url()),
+        )
+        .await
+    }
+
+    #[allow(dead_code)]
+    pub async fn handle_screenshot_dashboard_with_options(
+        &self,
+        dashboard_url: &str,
+        auth_config: Option<ScreenshotAuthConfig>,
+        save_to_file: bool,
+        file_directory: Option<String>,
+        http_serve: bool,
+        http_base_url: Option<String>,
+    ) -> Result<Value, ErrorData> {
         if let Some(screenshot_service) = &self.screenshot_service {
             let mut screenshot_service_guard = screenshot_service.lock().await;
             match screenshot_service_guard
-                .capture_dashboard(dashboard_url, auth_config)
+                .capture_dashboard_with_options(
+                    dashboard_url,
+                    auth_config,
+                    save_to_file,
+                    file_directory,
+                    http_serve,
+                    http_base_url,
+                )
                 .await
             {
                 Ok(response) => Ok(json!({
                     "success": response.success,
                     "image_base64": response.image_base64,
+                    "file_path": response.file_path,
+                    "screenshot_url": response.screenshot_url,
                     "error": response.error,
                     "metadata": response.metadata,
                     "tool": "screenshot_dashboard"
@@ -1323,6 +1385,31 @@ impl Service<RoleServer> for GoldentoothService {
                                     serde_json::from_value::<ScreenshotAuthConfig>(v.clone()).ok()
                                 });
 
+                            let save_to_file = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("save_to_file"))
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(true); // Default to file mode to avoid large responses
+
+                            let file_directory = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("file_directory"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "/tmp/screenshots".to_string());
+
+                            let http_serve = arguments
+                                .as_ref()
+                                .and_then(|args| args.get("http_serve"))
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(true); // Default to HTTP serving
+
+                            let http_base_url = if http_serve {
+                                Some(Self::get_screenshot_base_url())
+                            } else {
+                                None
+                            };
+
                             let request = ScreenshotRequest {
                                 url: url.to_string(),
                                 width,
@@ -1330,6 +1417,10 @@ impl Service<RoleServer> for GoldentoothService {
                                 wait_for_selector,
                                 wait_timeout_ms,
                                 authenticate: auth_config,
+                                save_to_file: Some(save_to_file),
+                                file_directory: Some(file_directory),
+                                http_serve: Some(http_serve),
+                                http_base_url,
                             };
 
                             match self.handle_screenshot(request).await {
