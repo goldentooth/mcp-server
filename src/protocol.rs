@@ -16,7 +16,7 @@ pub async fn process_mcp_message(message: McpMessage, streams: &mut McpStreams) 
                 .log_warn("Received unexpected response message")
                 .await
             {
-                eprintln!("Failed to log warning: {}", e);
+                eprintln!("Failed to log warning: {e}");
             }
             McpMessage::Error(McpError::invalid_request(
                 MessageId::Number(0),
@@ -26,7 +26,7 @@ pub async fn process_mcp_message(message: McpMessage, streams: &mut McpStreams) 
         McpMessage::Error(_) => {
             // We shouldn't receive errors as a server
             if let Err(e) = streams.log_warn("Received unexpected error message").await {
-                eprintln!("Failed to log warning: {}", e);
+                eprintln!("Failed to log warning: {e}");
             }
             McpMessage::Error(McpError::invalid_request(
                 MessageId::Number(0),
@@ -45,7 +45,7 @@ pub async fn process_mcp_request(req: McpRequest, streams: &mut McpStreams) -> M
         ))
         .await
     {
-        eprintln!("Failed to log debug: {}", e);
+        eprintln!("Failed to log debug: {e}");
     }
 
     match req.method {
@@ -181,16 +181,16 @@ pub async fn process_json_request(
                 .log_debug(&format!("Parsed message with ID: {}", message.id()))
                 .await
             {
-                eprintln!("Failed to log debug: {}", e);
+                eprintln!("Failed to log debug: {e}");
             }
             Ok(process_mcp_message(message, streams).await)
         }
         Err(e) => {
             if let Err(log_err) = streams
-                .log_error(&format!("Failed to parse JSON-RPC message: {}", e))
+                .log_error(&format!("Failed to parse JSON-RPC message: {e}"))
                 .await
             {
-                eprintln!("Failed to log error: {}", log_err);
+                eprintln!("Failed to log error: {log_err}");
             }
             // Return parse error with null ID since we couldn't parse the message
             Ok(McpMessage::Error(McpError::parse_error(

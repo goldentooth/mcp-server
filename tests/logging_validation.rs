@@ -156,7 +156,7 @@ fn test_error_context_preservation() {
 async fn integration_test_stdio_separation() {
     // This is the one subprocess test we keep for end-to-end validation
     let build_result = std::process::Command::new("cargo")
-        .args(&["build"])
+        .args(["build"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output();
 
@@ -202,7 +202,7 @@ async fn integration_test_stdio_separation() {
             for line in stdout_text.lines() {
                 if !line.trim().is_empty() {
                     let parsed: Result<serde_json::Value, _> = serde_json::from_str(line);
-                    assert!(parsed.is_ok(), "stdout line must be valid JSON: {}", line);
+                    assert!(parsed.is_ok(), "stdout line must be valid JSON: {line}");
 
                     let json = parsed.unwrap();
                     assert_eq!(

@@ -9,7 +9,7 @@ static BUILD_ONCE: Once = Once::new();
 fn ensure_binary_built() {
     BUILD_ONCE.call_once(|| {
         let result = std::process::Command::new("cargo")
-            .args(&["build"])
+            .args(["build"])
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .output()
             .expect("Failed to build binary for subprocess tests");
@@ -40,10 +40,7 @@ async fn test_binary_launches_successfully() {
             let _ = child.kill().await;
         }
         Err(e) => {
-            panic!(
-                "Binary should be able to launch even if not fully implemented: {}",
-                e
-            );
+            panic!("Binary should be able to launch even if not fully implemented: {e}");
         }
     }
 }
@@ -70,7 +67,7 @@ async fn test_clean_shutdown_on_stdin_close() {
             assert!(status.success() || status.code().is_some());
         }
         Err(e) => {
-            panic!("Need working binary for subprocess tests: {}", e);
+            panic!("Need working binary for subprocess tests: {e}");
         }
     }
 }
@@ -95,8 +92,7 @@ fn test_version_flag() {
         version_output.contains(expected_version)
             || version_output.contains("goldentooth-mcp")
             || version_output.contains("version"), // Generic version output
-        "Version output should contain version info: {}",
-        version_output
+        "Version output should contain version info: {version_output}"
     );
 }
 
@@ -121,10 +117,10 @@ async fn test_stdout_only_contains_mcp_messages() {
             let init_request = r#"{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
 
             if let Err(e) = stdin.write_all(init_request.as_bytes()).await {
-                panic!("Should be able to write to stdin: {}", e);
+                panic!("Should be able to write to stdin: {e}");
             }
             if let Err(e) = stdin.write_all(b"\n").await {
-                panic!("Should be able to write newline: {}", e);
+                panic!("Should be able to write newline: {e}");
             }
 
             // Try to read response from stdout with timeout
@@ -148,8 +144,7 @@ async fn test_stdout_only_contains_mcp_messages() {
                             }
                             Err(_) => {
                                 panic!(
-                                    "stdout should only contain valid JSON-RPC messages, got: {}",
-                                    line
+                                    "stdout should only contain valid JSON-RPC messages, got: {line}"
                                 );
                             }
                         }
@@ -157,7 +152,7 @@ async fn test_stdout_only_contains_mcp_messages() {
                 }
                 Ok(Err(e)) => {
                     // Read error, acceptable for now
-                    eprintln!("Read error (acceptable for now): {}", e);
+                    eprintln!("Read error (acceptable for now): {e}");
                 }
                 Err(_) => {
                     // Timeout - no response, which is OK for current implementation
@@ -167,7 +162,7 @@ async fn test_stdout_only_contains_mcp_messages() {
             let _ = child.kill().await;
         }
         Err(e) => {
-            panic!("Need working binary for stdio separation test: {}", e);
+            panic!("Need working binary for stdio separation test: {e}");
         }
     }
 }
@@ -188,8 +183,7 @@ fn test_help_flag() {
             let exit_code = result.status.code().unwrap_or(-1);
             assert!(
                 exit_code == 0 || exit_code == 2,
-                "Help should exit cleanly, got: {}",
-                exit_code
+                "Help should exit cleanly, got: {exit_code}"
             );
 
             // Should output something to stdout or stderr
@@ -202,7 +196,7 @@ fn test_help_flag() {
         }
         Err(e) => {
             // It's OK if --help isn't implemented yet
-            eprintln!("--help not yet implemented: {}", e);
+            eprintln!("--help not yet implemented: {e}");
         }
     }
 }

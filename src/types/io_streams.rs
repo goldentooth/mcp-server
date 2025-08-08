@@ -17,6 +17,12 @@ pub struct StdoutWriter {
     writer: Box<dyn AsyncWrite + Send + Unpin>,
 }
 
+impl Default for StdoutWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StdoutWriter {
     /// Create a new stdout writer for MCP messages
     pub fn new() -> Self {
@@ -61,6 +67,12 @@ impl StdoutWriter {
 pub struct StderrWriter {
     #[derivative(Debug = "ignore")]
     writer: Box<dyn AsyncWrite + Send + Unpin>,
+}
+
+impl Default for StderrWriter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StderrWriter {
@@ -116,6 +128,12 @@ impl StderrWriter {
 pub struct McpStreams {
     pub stdout: StdoutWriter,
     pub stderr: StderrWriter,
+}
+
+impl Default for McpStreams {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl McpStreams {

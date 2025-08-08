@@ -37,8 +37,8 @@ pub enum MessageId {
 impl Display for MessageId {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            MessageId::Number(n) => write!(f, "{}", n),
-            MessageId::String(s) => write!(f, "{}", s),
+            MessageId::Number(n) => write!(f, "{n}"),
+            MessageId::String(s) => write!(f, "{s}"),
         }
     }
 }
@@ -77,7 +77,7 @@ impl Display for McpMethod {
             McpMethod::PromptsList => "prompts/list",
             McpMethod::PromptsGet => "prompts/get",
         };
-        write!(f, "{}", method_str)
+        write!(f, "{method_str}")
     }
 }
 

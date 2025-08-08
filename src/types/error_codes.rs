@@ -152,10 +152,8 @@ impl ErrorCode {
     pub fn from_code(code: i32) -> Option<Self> {
         if let Some(json_rpc) = JsonRpcErrorCode::from_code(code) {
             Some(ErrorCode::JsonRpc(json_rpc))
-        } else if let Some(mcp) = McpErrorCode::from_code(code) {
-            Some(ErrorCode::Mcp(mcp))
         } else {
-            None
+            McpErrorCode::from_code(code).map(ErrorCode::Mcp)
         }
     }
 
@@ -283,9 +281,9 @@ mod tests {
     #[test]
     fn test_display_formatting() {
         let json_rpc = JsonRpcErrorCode::MethodNotFound;
-        assert_eq!(format!("{}", json_rpc), "Method not found (-32601)");
+        assert_eq!(format!("{json_rpc}"), "Method not found (-32601)");
 
         let mcp = McpErrorCode::NodeUnreachable;
-        assert_eq!(format!("{}", mcp), "Cluster node is unreachable (-32000)");
+        assert_eq!(format!("{mcp}"), "Cluster node is unreachable (-32000)");
     }
 }

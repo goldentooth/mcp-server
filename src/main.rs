@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Log server startup (goes to stderr automatically)
     streams.log_info("Goldentooth MCP server starting").await?;
     streams
-        .log_debug(&format!("Log level set to: {}", log_level))
+        .log_debug(&format!("Log level set to: {log_level}"))
         .await?;
 
     // Start MCP server with stdio transport
@@ -74,7 +74,7 @@ async fn handle_version(streams: &mut McpStreams) -> Result<(), Box<dyn std::err
 
     // Version output goes to stdout (but our streams ensure it's not an MCP message)
     // For CLI usage, we need to print directly since we're not in MCP mode
-    println!("{}", version_info);
+    println!("{version_info}");
 
     Ok(())
 }
@@ -112,7 +112,7 @@ Examples:
     );
 
     // Help output goes to stdout for CLI usage
-    println!("{}", help_text);
+    println!("{help_text}");
 
     Ok(())
 }
@@ -124,16 +124,13 @@ async fn handle_invalid_arg(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Log the error (goes to stderr)
     streams
-        .log_error(&format!("Invalid argument: {}", arg))
+        .log_error(&format!("Invalid argument: {arg}"))
         .await?;
 
-    let error_msg = format!(
-        "Error: Unknown argument '{}'\n\nUse --help for usage information.",
-        arg
-    );
+    let error_msg = format!("Error: Unknown argument '{arg}'\n\nUse --help for usage information.");
 
     // Error message goes to stderr for CLI usage
-    eprintln!("{}", error_msg);
+    eprintln!("{error_msg}");
 
     Ok(())
 }
@@ -157,16 +154,14 @@ async fn run_mcp_server_loop(
             continue;
         }
 
-        streams
-            .log_trace(&format!("Received line: {}", line))
-            .await?;
+        streams.log_trace(&format!("Received line: {line}")).await?;
 
         // Process the JSON-RPC message using our protocol module
         let response = match process_json_request(&line, streams).await {
             Ok(response) => response,
             Err(e) => {
                 streams
-                    .log_error(&format!("Failed to process request: {}", e))
+                    .log_error(&format!("Failed to process request: {e}"))
                     .await?;
                 continue; // Skip this malformed request
             }
@@ -175,7 +170,7 @@ async fn run_mcp_server_loop(
         // Send response to stdout using our type-safe streams
         if let Err(e) = streams.send_response(response).await {
             streams
-                .log_error(&format!("Failed to send response: {}", e))
+                .log_error(&format!("Failed to send response: {e}"))
                 .await?;
             break;
         }

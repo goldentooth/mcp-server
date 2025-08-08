@@ -8,11 +8,12 @@ use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 
 /// Log levels in order of severity (lowest to highest)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     Trace,
     Debug,
+    #[default]
     Info,
     Warn,
     Error,
@@ -27,7 +28,7 @@ impl Display for LogLevel {
             LogLevel::Warn => "warn",
             LogLevel::Error => "error",
         };
-        write!(f, "{}", level_str)
+        write!(f, "{level_str}")
     }
 }
 
@@ -43,12 +44,6 @@ impl FromStr for LogLevel {
             "error" | "err" => Ok(LogLevel::Error),
             _ => Err(InvalidLogLevel(s.to_string())),
         }
-    }
-}
-
-impl Default for LogLevel {
-    fn default() -> Self {
-        LogLevel::Info
     }
 }
 
