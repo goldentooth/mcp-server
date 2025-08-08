@@ -4,6 +4,7 @@
 //! tested directly without subprocess overhead.
 
 use crate::types::{McpError, McpMessage, McpRequest, McpResponse, McpStreams, MessageId};
+use crate::validation::{validate_mcp_request, validation_error_to_mcp_error};
 use std::env;
 
 /// Process a parsed MCP message and return appropriate response
@@ -46,6 +47,23 @@ pub async fn process_mcp_request(req: McpRequest, streams: &mut McpStreams) -> M
         .await
     {
         eprintln!("Failed to log debug: {e}");
+    }
+
+    // Validate the request thoroughly before processing
+    if let Err(validation_error) = validate_mcp_request(&req) {
+        if let Err(e) = streams
+            .log_warn(&format!(
+                "Request validation failed for {}: {}",
+                req.method, validation_error
+            ))
+            .await
+        {
+            eprintln!("Failed to log validation warning: {e}");
+        }
+        return McpMessage::Error(validation_error_to_mcp_error(
+            validation_error,
+            req.id.clone(),
+        ));
     }
 
     match req.method {
@@ -192,11 +210,9 @@ pub async fn process_json_request(
             {
                 eprintln!("Failed to log error: {log_err}");
             }
-            // Return parse error with null ID since we couldn't parse the message
-            Ok(McpMessage::Error(McpError::parse_error(
-                MessageId::Number(0),
-                Some(serde_json::json!({"error": e.to_string()})),
-            )))
+            // Return error to caller so main loop can handle it appropriately
+            // This allows implementation of circuit breaker logic and proper error handling
+            Err(format!("JSON parse error: {e}"))
         }
     }
 }

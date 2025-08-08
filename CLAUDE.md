@@ -137,7 +137,7 @@ This is a complete architectural rewrite with comprehensive planning documentati
 ### Quality Standards
 - **Testing**: Both transport modes must be equally testable
 - **Security**: Authentication required for all HTTP connections
-- **Performance**: <100ms response times for cluster status operations
+- **Performance**: <5s response times for cluster status operations (network-bound)
 - **Reliability**: Graceful degradation when nodes unavailable
 
 ### Implementation Guidelines

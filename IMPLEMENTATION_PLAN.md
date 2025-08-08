@@ -103,7 +103,7 @@
 ### Success Metrics
 
 - **Functionality**: All existing MCP tools replicated with improved error handling
-- **Performance**: <100ms response time for cluster status operations
+- **Performance**: <5s response time for cluster status operations (limited by SSH network latency)
 - **Reliability**: 99.9% uptime in production deployment
 - **Security**: Zero security incidents, comprehensive audit trail
 - **Usability**: Both transports work identically for all operations
