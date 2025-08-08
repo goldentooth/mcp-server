@@ -247,6 +247,35 @@ impl McpStreams {
     pub fn log_level(&self) -> crate::types::LogLevel {
         self.log_level_threshold
     }
+
+    /// Log a debug message with automatic error handling
+    /// This eliminates the repeated pattern of checking log errors and printing to eprintln
+    pub async fn log_debug_safe(&mut self, message: &str) {
+        if let Err(e) = self.log_debug(message).await {
+            eprintln!("Failed to log debug: {e}");
+        }
+    }
+
+    /// Log an info message with automatic error handling
+    pub async fn log_info_safe(&mut self, message: &str) {
+        if let Err(e) = self.log_info(message).await {
+            eprintln!("Failed to log info: {e}");
+        }
+    }
+
+    /// Log a warning message with automatic error handling
+    pub async fn log_warn_safe(&mut self, message: &str) {
+        if let Err(e) = self.log_warn(message).await {
+            eprintln!("Failed to log warning: {e}");
+        }
+    }
+
+    /// Log an error message with automatic error handling
+    pub async fn log_error_safe(&mut self, message: &str) {
+        if let Err(e) = self.log_error(message).await {
+            eprintln!("Failed to log error: {e}");
+        }
+    }
 }
 
 #[cfg(test)]

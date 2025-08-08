@@ -45,7 +45,7 @@ impl Display for MessageId {
 }
 
 /// MCP method names - constrained to valid methods
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum McpMethod {
     #[serde(rename = "initialize")]
@@ -66,9 +66,11 @@ pub enum McpMethod {
     PromptsGet,
 }
 
-impl Display for McpMethod {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        let method_str = match self {
+impl McpMethod {
+    /// Get the string representation of this method
+    /// This is the single source of truth for method string mappings
+    pub const fn as_str(&self) -> &'static str {
+        match self {
             McpMethod::Initialize => "initialize",
             McpMethod::Ping => "ping",
             McpMethod::ToolsList => "tools/list",
@@ -77,8 +79,27 @@ impl Display for McpMethod {
             McpMethod::ResourcesRead => "resources/read",
             McpMethod::PromptsList => "prompts/list",
             McpMethod::PromptsGet => "prompts/get",
-        };
-        write!(f, "{method_str}")
+        }
+    }
+
+    /// Get all valid method variants
+    pub const fn all_methods() -> &'static [McpMethod] {
+        &[
+            McpMethod::Initialize,
+            McpMethod::Ping,
+            McpMethod::ToolsList,
+            McpMethod::ToolsCall,
+            McpMethod::ResourcesList,
+            McpMethod::ResourcesRead,
+            McpMethod::PromptsList,
+            McpMethod::PromptsGet,
+        ]
+    }
+}
+
+impl Display for McpMethod {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -98,17 +119,13 @@ impl FromStr for McpMethod {
     type Err = InvalidMethod;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "initialize" => Ok(McpMethod::Initialize),
-            "ping" => Ok(McpMethod::Ping),
-            "tools/list" => Ok(McpMethod::ToolsList),
-            "tools/call" => Ok(McpMethod::ToolsCall),
-            "resources/list" => Ok(McpMethod::ResourcesList),
-            "resources/read" => Ok(McpMethod::ResourcesRead),
-            "prompts/list" => Ok(McpMethod::PromptsList),
-            "prompts/get" => Ok(McpMethod::PromptsGet),
-            _ => Err(InvalidMethod(s.to_string())),
+        // Use the single source of truth for method mappings
+        for method in Self::all_methods() {
+            if method.as_str() == s {
+                return Ok(*method);
+            }
         }
+        Err(InvalidMethod(s.to_string()))
     }
 }
 
