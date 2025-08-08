@@ -123,8 +123,15 @@ async fn test_tools_call_validation() {
     assert!(result.is_ok());
     if let Ok(response) = result {
         let json_str = response.to_json_string().unwrap();
-        // For now, tools return "not implemented" error, but structure should be valid
-        assert!(json_str.contains("error") && json_str.contains("not yet implemented"));
+        // Valid cluster_ping tool should return success result
+        assert!(
+            json_str.contains("result"),
+            "Valid cluster_ping should return result"
+        );
+        assert!(
+            !json_str.contains("error"),
+            "Valid cluster_ping should not return error"
+        );
     }
 }
 

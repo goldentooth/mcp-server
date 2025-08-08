@@ -3,6 +3,7 @@
 //! This module contains the core message processing functions that can be
 //! tested directly without subprocess overhead.
 
+use crate::tools;
 use crate::types::{McpError, McpMessage, McpRequest, McpResponse, McpStreams, MessageId};
 use crate::validation::{validate_mcp_request, validation_error_to_mcp_error};
 use std::env;
@@ -156,12 +157,31 @@ pub async fn process_mcp_request(req: McpRequest, streams: &mut McpStreams) -> M
             McpMessage::Response(McpResponse::tools_list_response(req.id.clone(), tools))
         }
         crate::types::McpMethod::ToolsCall => {
-            // For now, return method not found for actual tool calls
-            // TODO: Implement actual tool execution
-            McpMessage::Error(McpError::method_not_found(
-                req.id.clone(),
-                Some("Tool execution not yet implemented".to_string()),
-            ))
+            // Extract tool name and arguments from params
+            let params = req.params.unwrap_or_default();
+
+            let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+
+            let arguments = params
+                .get("arguments")
+                .unwrap_or(&serde_json::json!({}))
+                .clone();
+
+            if tool_name.is_empty() {
+                return McpMessage::Error(McpError::invalid_params(
+                    req.id.clone(),
+                    Some(serde_json::json!({"error": "Missing required parameter 'name'"})),
+                ));
+            }
+
+            // Execute the tool
+            match tools::execute_tool(tool_name, arguments).await {
+                Ok(result) => McpMessage::Response(McpResponse::new(result, req.id.clone())),
+                Err(err) => McpMessage::Error(McpError::internal_error(
+                    req.id.clone(),
+                    Some(serde_json::json!({"error": err})),
+                )),
+            }
         }
         crate::types::McpMethod::ResourcesList => {
             // Return empty resources list for now

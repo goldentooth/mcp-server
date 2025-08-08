@@ -158,11 +158,11 @@ async fn test_all_mcp_methods_coverage() {
     );
 
     let result = process_mcp_request(tools_call_request, &mut streams).await;
-    if let McpMessage::Error(error) = result {
-        let json_str = error.to_json_string().unwrap();
-        assert!(json_str.contains("not yet implemented"));
+    if let McpMessage::Response(response) = result {
+        let json_str = response.to_json_string().unwrap();
+        assert!(json_str.contains("nodes"));
     } else {
-        panic!("Tools call should return error (not implemented)");
+        panic!("Tools call cluster_ping should return success response");
     }
 }
 
