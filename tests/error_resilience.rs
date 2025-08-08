@@ -61,7 +61,7 @@ async fn test_valid_request_after_errors_should_work() {
     // Then send a valid request - it should work
     let valid_request = json!({
         "jsonrpc": "2.0",
-        "method": "notifications/ping",
+        "method": "ping",
         "id": 1
     })
     .to_string();

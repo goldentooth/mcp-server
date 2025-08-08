@@ -128,6 +128,7 @@ impl StderrWriter {
 pub struct McpStreams {
     pub stdout: StdoutWriter,
     pub stderr: StderrWriter,
+    log_level_threshold: crate::types::LogLevel,
 }
 
 impl Default for McpStreams {
@@ -139,9 +140,27 @@ impl Default for McpStreams {
 impl McpStreams {
     /// Create new streams using actual stdout/stderr
     pub fn new() -> Self {
+        let log_level = if cfg!(test) {
+            // During tests, only log errors to reduce noise
+            crate::types::LogLevel::Error
+        } else {
+            // In production, use environment variable
+            crate::types::LogLevel::from_env("MCP_LOG_LEVEL")
+        };
+
         Self {
             stdout: StdoutWriter::new(),
             stderr: StderrWriter::new(),
+            log_level_threshold: log_level,
+        }
+    }
+
+    /// Create new streams with a specific log level threshold
+    pub fn new_with_log_level(log_level: crate::types::LogLevel) -> Self {
+        Self {
+            stdout: StdoutWriter::new(),
+            stderr: StderrWriter::new(),
+            log_level_threshold: log_level,
         }
     }
 
@@ -154,6 +173,24 @@ impl McpStreams {
         Self {
             stdout: StdoutWriter::new_with_writer(stdout),
             stderr: StderrWriter::new_with_writer(stderr),
+            log_level_threshold: crate::types::LogLevel::Error, // Only errors during tests
+        }
+    }
+
+    /// Create streams for testing with custom writers and specific log level
+    pub fn new_with_writers_and_log_level<OUT, ERR>(
+        stdout: OUT,
+        stderr: ERR,
+        log_level: crate::types::LogLevel,
+    ) -> Self
+    where
+        OUT: AsyncWrite + Send + Unpin + 'static,
+        ERR: AsyncWrite + Send + Unpin + 'static,
+    {
+        Self {
+            stdout: StdoutWriter::new_with_writer(stdout),
+            stderr: StderrWriter::new_with_writer(stderr),
+            log_level_threshold: log_level,
         }
     }
 
@@ -168,7 +205,12 @@ impl McpStreams {
         level: crate::types::LogLevel,
         message: &str,
     ) -> Result<(), io::Error> {
-        self.stderr.write_log(level, message).await
+        if level.should_log(self.log_level_threshold) {
+            self.stderr.write_log(level, message).await
+        } else {
+            // Skip logging if below threshold
+            Ok(())
+        }
     }
 
     /// Log an info message
@@ -194,6 +236,16 @@ impl McpStreams {
     /// Log a warning message
     pub async fn log_warn(&mut self, message: &str) -> Result<(), io::Error> {
         self.log(crate::types::LogLevel::Warn, message).await
+    }
+
+    /// Set the log level threshold (useful for testing)
+    pub fn set_log_level(&mut self, level: crate::types::LogLevel) {
+        self.log_level_threshold = level;
+    }
+
+    /// Get the current log level threshold
+    pub fn log_level(&self) -> crate::types::LogLevel {
+        self.log_level_threshold
     }
 }
 
@@ -226,7 +278,7 @@ mod tests {
 
         // Must contain JSON-RPC 2.0 fields
         assert!(json.contains(r#""jsonrpc":"2.0""#));
-        assert!(json.contains(r#""method":"notifications/ping""#));
+        assert!(json.contains(r#""method":"ping""#));
         assert!(json.contains(r#""id":1"#));
     }
 

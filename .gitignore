@@ -3,3 +3,5 @@
 Cargo.lock
 **/*.rs.bk
 *.pdb
+coverage.lcov
+coverage-report/**

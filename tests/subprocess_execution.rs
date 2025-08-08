@@ -1,28 +1,20 @@
 use std::process::Stdio;
-use std::sync::Once;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
-// Build once for all tests
-static BUILD_ONCE: Once = Once::new();
-
-fn ensure_binary_built() {
-    BUILD_ONCE.call_once(|| {
-        let result = std::process::Command::new("cargo")
-            .args(["build"])
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .output()
-            .expect("Failed to build binary for subprocess tests");
-
-        if !result.status.success() {
-            panic!("Build failed: {}", String::from_utf8_lossy(&result.stderr));
-        }
-    });
+fn ensure_binary_exists() {
+    let binary_path = format!(
+        "{}/target/debug/goldentooth-mcp",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    if !std::path::Path::new(&binary_path).exists() {
+        panic!("Binary not found at {binary_path}. Run 'cargo build' first.");
+    }
 }
 
 #[tokio::test]
 async fn test_binary_launches_successfully() {
-    ensure_binary_built();
+    ensure_binary_exists();
 
     let child_result = Command::new("./target/debug/goldentooth-mcp")
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -47,7 +39,7 @@ async fn test_binary_launches_successfully() {
 
 #[tokio::test]
 async fn test_clean_shutdown_on_stdin_close() {
-    ensure_binary_built();
+    ensure_binary_exists();
 
     let child_result = Command::new("./target/debug/goldentooth-mcp")
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -74,7 +66,7 @@ async fn test_clean_shutdown_on_stdin_close() {
 
 #[test] // Not async - this is a simple CLI test
 fn test_version_flag() {
-    ensure_binary_built();
+    ensure_binary_exists();
 
     let output = std::process::Command::new("./target/debug/goldentooth-mcp")
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -99,7 +91,7 @@ fn test_version_flag() {
 #[tokio::test]
 async fn test_stdout_only_contains_mcp_messages() {
     // This is the most critical test - stdio separation
-    ensure_binary_built();
+    ensure_binary_exists();
 
     let child_result = Command::new("./target/debug/goldentooth-mcp")
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -170,7 +162,7 @@ async fn test_stdout_only_contains_mcp_messages() {
 #[test]
 fn test_help_flag() {
     // Test that --help works (this should be fast)
-    ensure_binary_built();
+    ensure_binary_exists();
 
     let output = std::process::Command::new("./target/debug/goldentooth-mcp")
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -204,7 +196,7 @@ fn test_help_flag() {
 #[test]
 fn test_invalid_args_exit_cleanly() {
     // Test that invalid arguments are handled gracefully
-    ensure_binary_built();
+    ensure_binary_exists();
 
     let output = std::process::Command::new("./target/debug/goldentooth-mcp")
         .current_dir(env!("CARGO_MANIFEST_DIR"))

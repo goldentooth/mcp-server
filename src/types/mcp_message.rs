@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::{self, Display, Formatter};
+use std::str::FromStr;
 
 /// JSON-RPC version - only 2.0 is supported
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,7 +50,7 @@ impl Display for MessageId {
 pub enum McpMethod {
     #[serde(rename = "initialize")]
     Initialize,
-    #[serde(rename = "notifications/ping")]
+    #[serde(rename = "ping")]
     Ping,
     #[serde(rename = "tools/list")]
     ToolsList,
@@ -69,7 +70,7 @@ impl Display for McpMethod {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let method_str = match self {
             McpMethod::Initialize => "initialize",
-            McpMethod::Ping => "notifications/ping",
+            McpMethod::Ping => "ping",
             McpMethod::ToolsList => "tools/list",
             McpMethod::ToolsCall => "tools/call",
             McpMethod::ResourcesList => "resources/list",
@@ -78,6 +79,36 @@ impl Display for McpMethod {
             McpMethod::PromptsGet => "prompts/get",
         };
         write!(f, "{method_str}")
+    }
+}
+
+/// Error type for invalid method strings
+#[derive(Debug, Clone)]
+pub struct InvalidMethod(pub String);
+
+impl Display for InvalidMethod {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "Invalid method '{}'", self.0)
+    }
+}
+
+impl std::error::Error for InvalidMethod {}
+
+impl FromStr for McpMethod {
+    type Err = InvalidMethod;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "initialize" => Ok(McpMethod::Initialize),
+            "ping" => Ok(McpMethod::Ping),
+            "tools/list" => Ok(McpMethod::ToolsList),
+            "tools/call" => Ok(McpMethod::ToolsCall),
+            "resources/list" => Ok(McpMethod::ResourcesList),
+            "resources/read" => Ok(McpMethod::ResourcesRead),
+            "prompts/list" => Ok(McpMethod::PromptsList),
+            "prompts/get" => Ok(McpMethod::PromptsGet),
+            _ => Err(InvalidMethod(s.to_string())),
+        }
     }
 }
 
@@ -185,6 +216,7 @@ pub struct McpError {
 pub struct JsonRpcErrorDetail {
     pub code: i32,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
 }
 
@@ -269,7 +301,7 @@ mod tests {
 
         // Should contain required fields
         assert!(json.contains(r#""jsonrpc":"2.0""#));
-        assert!(json.contains(r#""method":"notifications/ping""#));
+        assert!(json.contains(r#""method":"ping""#));
         assert!(json.contains(r#""id":1"#));
     }
 

@@ -31,7 +31,7 @@ async fn test_ping_pong() {
     // Basic ping/notifications.ping roundtrip
     let request = json!({
         "jsonrpc": "2.0",
-        "method": "notifications/ping",
+        "method": "ping",
         "id": 2
     });
 
@@ -98,7 +98,7 @@ async fn test_utf8_encoding() {
     // Test that UTF-8 characters are handled properly in MCP messages
     let request = json!({
         "jsonrpc": "2.0",
-        "method": "notifications/ping",
+        "method": "ping",
         "id": "unicode-test-🌍",
         "params": {
             "text": "Hello 世界 🌍 émojis and ñoñó"
