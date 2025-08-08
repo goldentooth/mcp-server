@@ -45,6 +45,7 @@ headless_chrome = "1.0"
 image = "0.25"
 tempfile = "3.8"
 bytes = "1.9"
+derivative = "2.2"
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -52,10 +53,5 @@ assert_matches = "1.5"
 futures = "0.3"
 url = "2.4"
 
-[[example]]
-name = "test_auth"
-path = "examples/test_auth.rs"
-
-[[example]]
-name = "test_screenshot"
-path = "examples/test_screenshot.rs"
+[build-dependencies]
+vergen = { version = "8.0", features = ["build", "git", "gitcl"] }
