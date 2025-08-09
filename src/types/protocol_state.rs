@@ -460,7 +460,7 @@ mod tests {
             name: "test-client".to_string(),
             version: "1.0.0".to_string(),
         };
-        let state = state.complete_initialization("2024-11-05".to_string(), client_info);
+        let state = state.complete_initialization("2025-06-18".to_string(), client_info);
         assert!(state.can_accept_requests());
         assert!(!state.is_method_allowed("initialize"));
         assert!(state.is_method_allowed("ping"));
@@ -490,7 +490,7 @@ mod tests {
             name: "test-client".to_string(),
             version: "1.0.0".to_string(),
         };
-        let state = state.complete_initialization("2024-11-05".to_string(), client_info);
+        let state = state.complete_initialization("2025-06-18".to_string(), client_info);
 
         // Now ping should be allowed
         assert!(ProtocolCompliance::validate_request(&state, "ping").is_ok());

@@ -176,7 +176,7 @@ async fn integration_test_stdio_separation() {
         Ok(mut child) => {
             // Send MCP request
             if let Some(stdin) = child.stdin.as_mut() {
-                let request = r#"{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
+                let request = r#"{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
                 let _ = stdin.write_all(request.as_bytes()).await;
                 let _ = stdin.write_all(b"\n").await;
             }

@@ -268,9 +268,9 @@ fn validate_initialize_params(params: &Option<Value>) -> Result<(), String> {
         .ok_or("protocolVersion must be a string")?;
 
     // Validate supported protocol version
-    if version_str != "2024-11-05" {
+    if version_str != "2025-06-18" {
         return Err(format!(
-            "Unsupported protocol version '{version_str}', expected '2024-11-05'"
+            "Unsupported protocol version '{version_str}', expected '2025-06-18'"
         ));
     }
 

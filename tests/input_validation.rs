@@ -58,7 +58,7 @@ async fn test_initialize_request_validation() {
         "method": "initialize",
         "id": 3,
         "params": {
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": "2025-06-18",
             "capabilities": {},
             "clientInfo": {"name": "test", "version": "1.0"}
         }

@@ -314,7 +314,7 @@ async fn test_request_response_format_validation() {
     assert_eq!(initialize_request["method"], "initialize");
     assert_eq!(
         initialize_request["params"]["protocolVersion"],
-        "2024-11-05"
+        "2025-06-18"
     );
     assert!(initialize_request["params"]["capabilities"].is_object());
     assert!(initialize_request["params"]["clientInfo"].is_object());
@@ -333,7 +333,7 @@ async fn test_expected_response_format() {
                 "name": "goldentooth-mcp",
                 "version": "0.0.23"
             },
-            "protocolVersion": "2024-11-05"
+            "protocolVersion": "2025-06-18"
         }
     });
 
