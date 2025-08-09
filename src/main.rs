@@ -1,9 +1,7 @@
 use goldentooth_mcp::main_functions::{handle_help, handle_invalid_arg, handle_version};
-use goldentooth_mcp::protocol::process_json_request;
-use goldentooth_mcp::transport::HttpTransport;
+use goldentooth_mcp::transport::{HttpTransport, StdioTransport};
 use goldentooth_mcp::types::{LogLevel, McpStreams};
 use std::env;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::signal;
 
 #[tokio::main]
@@ -45,114 +43,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Log server startup (goes to stderr automatically)
     streams.log_info("Goldentooth MCP server starting").await?;
-    streams
-        .log_debug(&format!("Log level set to: {log_level}"))
-        .await?;
 
     // Start MCP server with stdio transport
-    streams.log_info("Starting in stdio mode").await?;
-
-    // Start the MCP message processing loop
-    streams.log_info("MCP server ready for requests").await?;
-
-    run_mcp_server_loop(&mut streams, log_level).await?;
+    let transport = StdioTransport::new(log_level);
+    transport.start(&mut streams).await?;
 
     Ok(())
 }
 
 // Argument handlers moved to lib.rs main_functions module to eliminate duplication
-
-/// Main MCP server loop that processes JSON-RPC messages from stdin
-async fn run_mcp_server_loop(
-    streams: &mut McpStreams,
-    _log_level: LogLevel,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let stdin = tokio::io::stdin();
-    let reader = BufReader::new(stdin);
-    let mut lines = reader.lines();
-
-    streams
-        .log_debug("Starting message processing loop")
-        .await?;
-
-    let mut consecutive_errors = 0;
-    const MAX_CONSECUTIVE_ERRORS: usize = 5;
-
-    while let Some(line) = lines.next_line().await? {
-        // Skip empty lines
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        streams.log_trace(&format!("Received line: {line}")).await?;
-
-        // Process the JSON-RPC message using our protocol module
-        let response = match process_json_request(&line, streams).await {
-            Ok(response) => {
-                // Reset error count on successful processing
-                consecutive_errors = 0;
-                response
-            }
-            Err(e) => {
-                consecutive_errors += 1;
-                streams
-                    .log_error(&format!(
-                        "Failed to process request ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}): {e}"
-                    ))
-                    .await?;
-
-                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-                    streams
-                        .log_error(
-                            "Too many consecutive errors, shutting down to prevent infinite loop",
-                        )
-                        .await?;
-                    return Err(format!(
-                        "Exceeded maximum consecutive errors ({MAX_CONSECUTIVE_ERRORS})"
-                    )
-                    .into());
-                }
-
-                // Try to create a parse error response if we can extract an ID
-                // Otherwise skip this request
-                if let Ok(parsed_json) = serde_json::from_str::<serde_json::Value>(&line) {
-                    if let Some(id_value) = parsed_json.get("id") {
-                        // Try to create a proper error response with the original ID
-                        use goldentooth_mcp::types::{McpError, McpMessage, MessageId};
-                        let id = if let Some(num) = id_value.as_u64() {
-                            MessageId::Number(num)
-                        } else if let Some(s) = id_value.as_str() {
-                            MessageId::String(s.to_string())
-                        } else {
-                            MessageId::Number(0)
-                        };
-                        McpMessage::Error(McpError::invalid_request(
-                            id,
-                            Some(serde_json::json!({"error": "Request processing failed"})),
-                        ))
-                    } else {
-                        // No ID found, skip this request
-                        continue;
-                    }
-                } else {
-                    // Completely invalid JSON, skip
-                    continue;
-                }
-            }
-        };
-
-        // Send response to stdout using our type-safe streams
-        if let Err(e) = streams.send_response(response).await {
-            streams
-                .log_error(&format!("Failed to send response: {e}"))
-                .await?;
-            break;
-        }
-    }
-
-    streams.log_info("MCP server shutting down").await?;
-    Ok(())
-}
 
 /// Run HTTP transport mode
 async fn run_http_transport(
