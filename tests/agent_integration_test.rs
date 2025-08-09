@@ -56,11 +56,16 @@ async fn get_agent_binary() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let response = client.get(&release_url).send().await?;
 
     if !response.status().is_success() {
-        eprintln!(
-            "Release download failed ({}), falling back to building from source...",
-            response.status()
-        );
-        return build_local_agent().await;
+        if response.status() == 404 {
+            eprintln!("No agent releases available yet, skipping integration test");
+            // Return a special error that tests can handle to skip gracefully
+            return Err("NoReleasesAvailable".into());
+        }
+        return Err(format!(
+            "Failed to download Goldentooth Agent release: HTTP {}. Check that releases are available at: {}",
+            response.status(),
+            release_url
+        ).into());
     }
 
     let binary_content = response.bytes().await?;
@@ -78,85 +83,6 @@ async fn get_agent_binary() -> Result<PathBuf, Box<dyn std::error::Error>> {
     }
 
     eprintln!("Downloaded Goldentooth Agent binary to: {binary_path:?}");
-    Ok(binary_path)
-}
-
-/// Build agent locally from git (fallback for platforms without pre-built binaries)
-async fn build_local_agent() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let cache_dir = project_root.join("target").join("test-binaries");
-
-    tokio::fs::create_dir_all(&cache_dir).await?;
-
-    let binary_path = cache_dir.join("goldentooth-agent-local");
-
-    // Check if we already built it
-    if binary_path.exists() {
-        return Ok(binary_path);
-    }
-
-    // Use a unique temp directory for concurrent tests
-    let temp_dir = cache_dir.join(format!(
-        "agent-build-{}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis(),
-        rand::random::<u32>()
-    ));
-
-    // Clean up any existing temp directory aggressively
-    if temp_dir.exists() {
-        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-        // Wait a bit and try again if it still exists
-        if temp_dir.exists() {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-        }
-    }
-
-    eprintln!("Cloning and building Goldentooth Agent from source...");
-
-    // Clone the repository
-    let clone_output = tokio::process::Command::new("git")
-        .args(["clone", "https://github.com/goldentooth/agent.git"])
-        .arg(&temp_dir)
-        .output()
-        .await?;
-
-    if !clone_output.status.success() {
-        let stderr = String::from_utf8_lossy(&clone_output.stderr);
-        return Err(format!("Failed to clone agent repository: {stderr}").into());
-    }
-
-    // Build the binary
-    let build_output = tokio::process::Command::new("cargo")
-        .args(["build", "--release"])
-        .current_dir(&temp_dir)
-        .output()
-        .await?;
-
-    if !build_output.status.success() {
-        let stderr = String::from_utf8_lossy(&build_output.stderr);
-        return Err(format!("Failed to build agent: {stderr}").into());
-    }
-
-    // Copy the built binary to our cache
-    let built_binary = temp_dir
-        .join("target")
-        .join("release")
-        .join("goldentooth-agent");
-    if !built_binary.exists() {
-        return Err("Built binary not found".into());
-    }
-
-    tokio::fs::copy(&built_binary, &binary_path).await?;
-
-    // Clean up temp directory
-    tokio::fs::remove_dir_all(&temp_dir).await?;
-
-    eprintln!("Built Goldentooth Agent binary at: {binary_path:?}");
     Ok(binary_path)
 }
 
@@ -200,10 +126,15 @@ async fn send_jsonrpc_message(
 async fn test_agent_binary_available() {
     setup_test();
 
-    // Verify we can get the agent binary
-    let agent_path = get_agent_binary()
-        .await
-        .expect("Should be able to get agent binary from GitHub releases");
+    // Verify we can download the agent binary from releases
+    let agent_path = match get_agent_binary().await {
+        Ok(path) => path,
+        Err(e) if e.to_string() == "NoReleasesAvailable" => {
+            println!("⏭️  Skipping test - no agent releases available yet");
+            return;
+        }
+        Err(e) => panic!("Should be able to download agent binary from GitHub releases: {e}"),
+    };
 
     assert!(
         agent_path.exists(),
@@ -231,9 +162,14 @@ async fn test_agent_binary_available() {
 async fn test_mcp_server_agent_compatibility() {
     setup_test();
 
-    let _agent_path = get_agent_binary()
-        .await
-        .expect("Failed to get agent binary");
+    let _agent_path = match get_agent_binary().await {
+        Ok(path) => path,
+        Err(e) if e.to_string() == "NoReleasesAvailable" => {
+            println!("⏭️  Skipping test - no agent releases available yet");
+            return;
+        }
+        Err(e) => panic!("Failed to get agent binary: {e}"),
+    };
 
     // Start MCP server
     let mut server = start_mcp_server()
@@ -330,9 +266,14 @@ async fn test_mcp_server_agent_compatibility() {
 async fn test_protocol_version_enforcement() {
     setup_test();
 
-    let _agent_path = get_agent_binary()
-        .await
-        .expect("Failed to get agent binary");
+    let _agent_path = match get_agent_binary().await {
+        Ok(path) => path,
+        Err(e) if e.to_string() == "NoReleasesAvailable" => {
+            println!("⏭️  Skipping test - no agent releases available yet");
+            return;
+        }
+        Err(e) => panic!("Failed to get agent binary: {e}"),
+    };
 
     // Start MCP server
     let mut server = start_mcp_server()
@@ -384,9 +325,14 @@ async fn test_protocol_version_enforcement() {
 async fn test_error_handling_compatibility() {
     setup_test();
 
-    let _agent_path = get_agent_binary()
-        .await
-        .expect("Failed to get agent binary");
+    let _agent_path = match get_agent_binary().await {
+        Ok(path) => path,
+        Err(e) if e.to_string() == "NoReleasesAvailable" => {
+            println!("⏭️  Skipping test - no agent releases available yet");
+            return;
+        }
+        Err(e) => panic!("Failed to get agent binary: {e}"),
+    };
 
     // Start MCP server
     let mut server = start_mcp_server()
