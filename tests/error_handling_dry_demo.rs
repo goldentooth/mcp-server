@@ -1,8 +1,8 @@
 //! Demonstration of DRY error handling patterns using test helpers
 
 mod common;
+use common::test_helpers::{McpRequestBuilders, McpRequestProcessor};
 use common::test_helpers::{TestDataGenerators, TestStreamsBuilder};
-use common::{McpRequestBuilders, McpRequestProcessor};
 use goldentooth_mcp::types::LogLevel;
 use serde_json::json;
 
