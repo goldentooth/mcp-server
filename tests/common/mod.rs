@@ -8,6 +8,7 @@ pub mod test_helpers;
 // Re-export commonly used items for convenience
 pub use test_helpers::{McpRequestBuilders, McpRequestProcessor};
 
+#[allow(dead_code)]
 pub struct McpServerProcess {
     pub child: Child,
     pub stdin: ChildStdin,
@@ -15,6 +16,7 @@ pub struct McpServerProcess {
     pub stderr: BufReader<ChildStderr>,
 }
 
+#[allow(dead_code)]
 impl McpServerProcess {
     pub async fn spawn() -> Result<Self, Box<dyn std::error::Error>> {
         // First ensure the binary is built
@@ -95,9 +97,7 @@ impl McpServerProcess {
 
     pub async fn shutdown_gracefully(&mut self) -> Result<ExitStatus, Box<dyn std::error::Error>> {
         // Close stdin to signal shutdown
-        drop(std::mem::replace(&mut self.stdin, unsafe {
-            std::mem::zeroed()
-        }));
+        self.stdin.shutdown().await?;
 
         // Wait for process to exit
         let status = self.child.wait().await?;

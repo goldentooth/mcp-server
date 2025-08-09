@@ -20,6 +20,7 @@ impl Default for TestStreamsBuilder {
     }
 }
 
+#[allow(dead_code)]
 impl TestStreamsBuilder {
     pub fn new() -> Self {
         Self {
@@ -102,6 +103,7 @@ impl JsonRpcRequestBuilder {
 /// Common request builders for specific MCP methods
 pub struct McpRequestBuilders;
 
+#[allow(dead_code)]
 impl McpRequestBuilders {
     pub fn initialize(id: impl Into<Value>) -> JsonRpcRequestBuilder {
         JsonRpcRequestBuilder::new("initialize")
@@ -151,6 +153,7 @@ impl McpRequestBuilders {
 /// Common MessageId builders
 pub struct MessageIds;
 
+#[allow(dead_code)]
 impl MessageIds {
     pub fn number(n: u64) -> MessageId {
         MessageId::Number(n)
@@ -172,6 +175,7 @@ impl MessageIds {
 /// Response assertions helper
 pub struct ResponseAssertions;
 
+#[allow(dead_code)]
 impl ResponseAssertions {
     /// Assert basic JSON-RPC 2.0 response structure
     pub fn assert_jsonrpc_response(response: &Value, expected_id: impl Into<Value>) {
@@ -233,6 +237,7 @@ pub struct McpRequestProcessor {
     streams: McpStreams,
 }
 
+#[allow(dead_code)]
 impl McpRequestProcessor {
     pub fn new() -> Self {
         Self {
@@ -293,8 +298,10 @@ impl Default for McpRequestProcessor {
 }
 
 /// Test data generators for common scenarios
+#[allow(dead_code)]
 pub struct TestDataGenerators;
 
+#[allow(dead_code)]
 impl TestDataGenerators {
     /// Generate invalid JSON strings for error testing
     pub fn invalid_json_strings() -> Vec<&'static str> {

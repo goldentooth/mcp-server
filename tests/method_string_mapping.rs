@@ -29,12 +29,8 @@ fn test_method_roundtrip_consistency() {
 
         // Should be identical
         assert_eq!(
-            method,
-            parsed_method,
-            "Method roundtrip failed for: {} -> {} -> {:?}",
-            format!("{:?}", method),
-            method_str,
-            parsed_method
+            method, parsed_method,
+            "Method roundtrip failed for: {method:?} -> {method_str} -> {parsed_method:?}"
         );
     }
 }
