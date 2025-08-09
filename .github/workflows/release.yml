@@ -70,10 +70,6 @@ jobs:
         else
           cp target/${{ matrix.target }}/release/goldentooth-mcp artifacts/${{ matrix.name }}
         fi
-        # Copy systemd service file only for x86_64 Linux target to avoid duplicates
-        if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
-          cp goldentooth-mcp.service artifacts/
-        fi
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
