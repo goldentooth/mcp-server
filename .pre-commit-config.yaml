@@ -20,14 +20,21 @@ repos:
         args: ["--edition=2024"]
         pass_filenames: true
 
+      - id: clippy-fix
+        name: clippy-fix
+        entry: cargo clippy
+        language: system
+        types: [rust]
+        pass_filenames: false
+        args: ["--fix", "--allow-dirty", "--all-targets", "--all-features", "--", "-D", "warnings"]
+
       - id: clippy
         name: clippy
         entry: cargo clippy
         language: system
         types: [rust]
         pass_filenames: false
-        always_run: true
-        args: ["--fix", "--allow-dirty", "--all-targets", "--all-features", "--", "-D", "warnings"]
+        args: ["--all-targets", "--all-features", "--", "-D", "warnings"]
 
       - id: cargo-check
         name: cargo check
