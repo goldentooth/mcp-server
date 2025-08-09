@@ -204,7 +204,7 @@ impl McpResponse {
     pub fn initialize_response(id: MessageId, capabilities: Value, server_info: Value) -> Self {
         Self::new(
             serde_json::json!({
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": "2025-06-18",
                 "capabilities": capabilities,
                 "serverInfo": server_info
             }),

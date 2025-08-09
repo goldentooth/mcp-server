@@ -9,7 +9,7 @@ async fn test_initialize_handshake() {
         "method": "initialize",
         "id": 1,
         "params": {
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": "2025-06-18",
             "capabilities": {},
             "clientInfo": {
                 "name": "test-client",

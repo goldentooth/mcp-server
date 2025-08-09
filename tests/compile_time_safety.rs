@@ -76,7 +76,7 @@ fn test_protocol_state_transitions_compile_time() {
         name: "test-client".to_string(),
         version: "1.0.0".to_string(),
     };
-    let state = state.complete_initialization("2024-11-05".to_string(), client_info);
+    let state = state.complete_initialization("2025-06-18".to_string(), client_info);
 
     // Now ping is allowed
     assert!(ProtocolCompliance::validate_request(&state, "ping").is_ok());

@@ -55,7 +55,7 @@ async fn test_all_mcp_methods_coverage() {
     let init_request = McpRequest::new(
         McpMethod::Initialize,
         Some(json!({
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": "2025-06-18",
             "capabilities": {},
             "clientInfo": {"name": "test", "version": "1.0"}
         })),

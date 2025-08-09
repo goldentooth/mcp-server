@@ -109,7 +109,7 @@ impl McpRequestBuilders {
         JsonRpcRequestBuilder::new("initialize")
             .with_id(id)
             .with_params(json!({
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": "2025-06-18",
                 "capabilities": {},
                 "clientInfo": {
                     "name": "test-client",
@@ -228,7 +228,7 @@ impl ResponseAssertions {
         Self::assert_success_response(response, expected_id);
         assert!(response["result"]["capabilities"].is_object());
         assert!(response["result"]["serverInfo"].is_object());
-        assert_eq!(response["result"]["protocolVersion"], "2024-11-05");
+        assert_eq!(response["result"]["protocolVersion"], "2025-06-18");
     }
 }
 

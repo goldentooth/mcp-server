@@ -114,7 +114,7 @@ async fn test_stdout_only_contains_mcp_messages() {
             let mut stdout = BufReader::new(child.stdout.as_mut().unwrap());
 
             // Send MCP initialize request
-            let init_request = r#"{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
+            let init_request = r#"{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
 
             if let Err(e) = stdin.write_all(init_request.as_bytes()).await {
                 panic!("Should be able to write to stdin: {e}");
