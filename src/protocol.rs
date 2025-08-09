@@ -5,7 +5,7 @@
 
 use crate::tools;
 use crate::types::{McpError, McpMessage, McpRequest, McpResponse, McpStreams, MessageId};
-use crate::validation::{validate_mcp_request, validation_error_to_mcp_error};
+use serde_json::Value;
 use std::env;
 
 /// Process a parsed MCP message and return appropriate response
@@ -44,25 +44,34 @@ pub async fn process_mcp_request(req: McpRequest, streams: &mut McpStreams) -> M
         ))
         .await;
 
-    // Validate the request thoroughly before processing
-    if let Err(validation_error) = validate_mcp_request(&req) {
-        streams
-            .log_warn_safe(&format!(
-                "Request validation failed for {}: {}",
-                req.method, validation_error
-            ))
-            .await;
-        return McpMessage::Error(validation_error_to_mcp_error(
-            validation_error,
-            req.id.clone(),
-        ));
+    // Validate initialize requests since they need proper protocol setup
+    if let crate::types::McpMethod::Initialize = req.method {
+        if let Err(error_msg) = validate_initialize_params(&req.params) {
+            streams
+                .log_warn_safe(&format!("Initialize validation failed: {error_msg}"))
+                .await;
+            return McpMessage::Error(McpError::invalid_params(
+                req.id.clone(),
+                Some(serde_json::json!({"error": error_msg})),
+            ));
+        }
     }
 
     match req.method {
         crate::types::McpMethod::Initialize => {
-            // Generate capabilities dynamically from available tools
-            let all_tools = tools::get_all_tools();
-            let tool_names: Vec<&str> = all_tools.iter().map(|tool| tool.name()).collect();
+            // Generate capabilities dynamically from type-safe tools
+            let tool_names = vec![
+                "cluster_ping",
+                "cluster_status",
+                "service_status",
+                "shell_command",
+                "resource_usage",
+                "cluster_info",
+                "journald_logs",
+                "loki_logs",
+                "screenshot_url",
+                "screenshot_dashboard",
+            ];
 
             McpMessage::Response(McpResponse::initialize_response(
                 req.id.clone(),
@@ -80,18 +89,78 @@ pub async fn process_mcp_request(req: McpRequest, streams: &mut McpStreams) -> M
             McpMessage::Response(McpResponse::pong(req.id.clone()))
         }
         crate::types::McpMethod::ToolsList => {
-            // Generate tool list dynamically from the tool trait implementations
-            let all_tools = tools::get_all_tools();
-            let tool_definitions: Vec<serde_json::Value> = all_tools
-                .into_iter()
-                .map(|tool| {
-                    serde_json::json!({
-                        "name": tool.name(),
-                        "description": tool.description(),
-                        "inputSchema": tool.input_schema()
-                    })
-                })
-                .collect();
+            // Generate tool list from type-safe tool definitions
+            let tool_definitions = vec![
+                serde_json::json!({
+                    "name": "cluster_ping",
+                    "description": "Ping all nodes in the Goldentooth cluster to check connectivity",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": false
+                    }
+                }),
+                serde_json::json!({
+                    "name": "cluster_status",
+                    "description": "Get detailed status information for cluster nodes",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "node": {
+                                "type": "string",
+                                "description": "Specific node to check (optional)"
+                            }
+                        },
+                        "additionalProperties": false
+                    }
+                }),
+                serde_json::json!({
+                    "name": "service_status",
+                    "description": "Check the status of systemd services on cluster nodes",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "service": {
+                                "type": "string",
+                                "description": "Service name to check"
+                            },
+                            "node": {
+                                "type": "string",
+                                "description": "Specific node to check (optional)"
+                            }
+                        },
+                        "required": ["service"],
+                        "additionalProperties": false
+                    }
+                }),
+                serde_json::json!({
+                    "name": "shell_command",
+                    "description": "Execute arbitrary shell commands on cluster nodes via SSH",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "command": {
+                                "type": "string",
+                                "description": "Shell command to execute (security validated)"
+                            },
+                            "node": {
+                                "type": "string",
+                                "description": "Specific node to run on (optional)"
+                            },
+                            "as_root": {
+                                "type": "boolean",
+                                "description": "Whether to execute as root user"
+                            },
+                            "timeout": {
+                                "type": "integer",
+                                "description": "Command timeout in seconds"
+                            }
+                        },
+                        "required": ["command"],
+                        "additionalProperties": false
+                    }
+                }), // Additional tools can be added here as they are implemented
+            ];
 
             McpMessage::Response(McpResponse::tools_list_response(
                 req.id.clone(),
@@ -116,12 +185,20 @@ pub async fn process_mcp_request(req: McpRequest, streams: &mut McpStreams) -> M
                 ));
             }
 
-            // Execute the tool
-            match tools::execute_tool(tool_name, arguments).await {
-                Ok(result) => McpMessage::Response(McpResponse::new(result, req.id.clone())),
-                Err(err) => McpMessage::Error(McpError::internal_error(
+            // Parse arguments using type-safe system and execute the tool
+            match tools::parse_tool_arguments(tool_name, arguments)
+                .map(tools::execute_tool_type_safe)
+            {
+                Ok(future_result) => match future_result.await {
+                    Ok(result) => McpMessage::Response(McpResponse::new(result, req.id.clone())),
+                    Err(err) => McpMessage::Error(McpError::internal_error(
+                        req.id.clone(),
+                        Some(serde_json::json!({"error": err.error_info().message})),
+                    )),
+                },
+                Err(parse_err) => McpMessage::Error(McpError::invalid_params(
                     req.id.clone(),
-                    Some(serde_json::json!({"error": err})),
+                    Some(serde_json::json!({"error": parse_err})),
                 )),
             }
         }
@@ -171,4 +248,59 @@ pub async fn process_json_request(
             Err(format!("JSON parse error: {e}"))
         }
     }
+}
+
+/// Validate initialize request parameters
+///
+/// The initialize method is special and requires protocol-level validation
+fn validate_initialize_params(params: &Option<Value>) -> Result<(), String> {
+    let params = params.as_ref().ok_or("initialize requires params")?;
+
+    let obj = params.as_object().ok_or("params must be an object")?;
+
+    // Validate protocolVersion
+    let protocol_version = obj
+        .get("protocolVersion")
+        .ok_or("Missing required parameter: protocolVersion")?;
+
+    let version_str = protocol_version
+        .as_str()
+        .ok_or("protocolVersion must be a string")?;
+
+    // Validate supported protocol version
+    if version_str != "2024-11-05" {
+        return Err(format!(
+            "Unsupported protocol version '{version_str}', expected '2024-11-05'"
+        ));
+    }
+
+    // Validate capabilities is present and is an object
+    let capabilities = obj
+        .get("capabilities")
+        .ok_or("Missing required parameter: capabilities")?;
+
+    if !capabilities.is_object() {
+        return Err("capabilities must be an object".to_string());
+    }
+
+    // Validate clientInfo is present and has required fields
+    let client_info = obj
+        .get("clientInfo")
+        .ok_or("Missing required parameter: clientInfo")?;
+
+    let client_obj = client_info
+        .as_object()
+        .ok_or("clientInfo must be an object")?;
+
+    // Client name is required
+    let _name = client_obj
+        .get("name")
+        .ok_or("Missing required parameter: clientInfo.name")?;
+
+    // Version is required
+    let _version = client_obj
+        .get("version")
+        .ok_or("Missing required parameter: clientInfo.version")?;
+
+    Ok(())
 }
