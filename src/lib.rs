@@ -7,7 +7,6 @@ pub mod protocol;
 pub mod tools;
 pub mod transport;
 pub mod types;
-pub mod validation;
 
 pub mod main_functions {
     use crate::types::McpStreams;
