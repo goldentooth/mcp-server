@@ -4,7 +4,7 @@
 
 mod common;
 use common::test_helpers::ResponseAssertions;
-use common::{McpRequestBuilders, McpRequestProcessor};
+use common::test_helpers::{McpRequestBuilders, McpRequestProcessor};
 use serde_json::json;
 
 #[tokio::test]

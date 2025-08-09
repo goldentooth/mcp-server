@@ -6,7 +6,6 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 pub mod test_helpers;
 
 // Re-export commonly used items for convenience
-pub use test_helpers::{McpRequestBuilders, McpRequestProcessor};
 
 #[allow(dead_code)]
 pub struct McpServerProcess {
