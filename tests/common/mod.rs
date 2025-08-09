@@ -3,6 +3,11 @@ use std::process::{ExitStatus, Stdio};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
+pub mod test_helpers;
+
+// Re-export commonly used items for convenience
+pub use test_helpers::{McpRequestBuilders, McpRequestProcessor};
+
 pub struct McpServerProcess {
     pub child: Child,
     pub stdin: ChildStdin,
@@ -14,14 +19,14 @@ impl McpServerProcess {
     pub async fn spawn() -> Result<Self, Box<dyn std::error::Error>> {
         // First ensure the binary is built
         let build_result = Command::new("cargo")
-            .args(&["build"])
+            .args(["build"])
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .output()
             .await?;
 
         if !build_result.status.success() {
             let stderr = String::from_utf8_lossy(&build_result.stderr);
-            return Err(format!("Build failed: {}", stderr).into());
+            return Err(format!("Build failed: {stderr}").into());
         }
 
         let mut child = Command::new("./target/debug/goldentooth-mcp")
@@ -73,7 +78,7 @@ impl McpServerProcess {
     }
 
     pub async fn collect_stderr_logs(&mut self) -> Result<String, Box<dyn std::error::Error>> {
-        let mut logs = String::new();
+        let logs = String::new();
         // Try to read available stderr data without blocking
         while let Ok(line) = tokio::time::timeout(
             tokio::time::Duration::from_millis(100),
