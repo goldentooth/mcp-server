@@ -42,6 +42,18 @@ jobs:
     - name: Run integration tests
       run: cargo test --test '*' --verbose
 
+    - name: Run agent compatibility tests
+      run: |
+        # Build server for integration testing
+        cargo build --release
+        mkdir -p target/debug
+        cp target/release/goldentooth-mcp target/debug/goldentooth-mcp
+
+        # Run agent integration tests
+        cargo test --test agent_integration_test --verbose -- --nocapture
+      env:
+        RUST_TEST_TIMEOUT: 300
+
     - name: Check that project builds
       run: cargo build --verbose --all-features
 

@@ -22,6 +22,12 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04
             name: goldentooth-mcp-aarch64-linux
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: goldentooth-mcp-x86_64-darwin
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: goldentooth-mcp-aarch64-darwin
     steps:
     - uses: actions/checkout@v4
 
@@ -111,7 +117,7 @@ jobs:
           --notes "Automated release of goldentooth-mcp ${{ steps.version.outputs.version }}
 
         - HTTP transport mode for remote MCP connections
-        - Architecture-specific Linux binaries (x86_64 and aarch64)
+        - Cross-platform binaries (Linux x86_64/aarch64, macOS x86_64/Apple Silicon)
         - Automated CI/CD with tag-based releases" \
           --latest \
           release-artifacts/*/*
