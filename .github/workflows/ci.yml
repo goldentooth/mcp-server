@@ -18,17 +18,12 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
+    - name: Setup Rust with cache
+      uses: ./.github/actions/setup-rust-with-cache
       with:
         toolchain: 1.86.0
         components: clippy, rustfmt
-
-    - name: Cache Rust dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        # Cache key depends on Cargo files and current job
-        key: test-${{ runner.os }}
+        cache-key-suffix: -test
 
     - name: Check formatting
       run: cargo fmt --all -- --check
@@ -42,15 +37,11 @@ jobs:
     - name: Run integration tests
       run: cargo test --test '*' --verbose
 
-    - name: Run agent compatibility tests
-      run: |
-        # Build server for integration testing
-        cargo build --release
-        mkdir -p target/debug
-        cp target/release/goldentooth-mcp target/debug/goldentooth-mcp
+    - name: Setup Goldentooth Agent for testing
+      uses: ./.github/actions/setup-goldentooth-agent
 
-        # Run agent integration tests
-        cargo test --test agent_integration_test --verbose -- --nocapture
+    - name: Run agent compatibility tests
+      run: cargo test --test agent_integration_test --verbose -- --nocapture
       env:
         RUST_TEST_TIMEOUT: 300
 
@@ -65,8 +56,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
+    - name: Setup Rust with cache
+      uses: ./.github/actions/setup-rust-with-cache
+      with:
+        cache-key-suffix: -audit
 
     - name: Install cargo-audit
       run: cargo install cargo-audit
@@ -82,18 +75,14 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
+    - name: Setup Rust with cache
+      uses: ./.github/actions/setup-rust-with-cache
       with:
         components: llvm-tools-preview
+        cache-key-suffix: -coverage
 
     - name: Install cargo-llvm-cov
       run: cargo install cargo-llvm-cov
-
-    - name: Cache Rust dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        key: coverage-${{ runner.os }}
 
     - name: Generate coverage report
       run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
@@ -106,8 +95,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
+    - name: Setup Rust with cache
+      uses: ./.github/actions/setup-rust-with-cache
+      with:
+        cache-key-suffix: -docs
 
     - name: Check documentation
       run: cargo doc --no-deps --document-private-items --all-features
@@ -129,21 +120,17 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
+    - name: Setup Rust with cache
+      uses: ./.github/actions/setup-rust-with-cache
       with:
         targets: ${{ matrix.target }}
+        cache-key-suffix: -${{ matrix.target }}
 
     - name: Install cross-compilation dependencies (Linux aarch64)
       if: matrix.target == 'aarch64-unknown-linux-gnu'
       run: |
         sudo apt-get update
         sudo apt-get install -y gcc-aarch64-linux-gnu
-
-    - name: Cache Rust dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        key: build-${{ matrix.target }}
 
     - name: Build for target
       run: |
