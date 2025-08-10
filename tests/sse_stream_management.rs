@@ -474,9 +474,7 @@ async fn test_concurrent_sse_connections_basic() {
 #[tokio::test]
 async fn test_actual_http_server_sse_integration() {
     unsafe {
-        unsafe {
-            std::env::set_var("MCP_AUTH_REQUIRED", "false");
-        }
+        std::env::set_var("MCP_AUTH_REQUIRED", "false");
     }
     let transport = goldentooth_mcp::transport::HttpTransport::new(false);
     let addr = transport
