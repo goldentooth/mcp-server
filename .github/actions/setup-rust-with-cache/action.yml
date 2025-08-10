@@ -30,5 +30,3 @@ runs:
 
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
-      with:
-        key: ${{ runner.os }}-rust${{ inputs.cache-key-suffix }}-${{ hashFiles('**/Cargo.lock') }}

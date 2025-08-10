@@ -35,7 +35,7 @@ runs:
         RELEASE_URL="https://github.com/goldentooth/agent/releases/latest/download/${BINARY_NAME}"
         echo "Downloading Goldentooth Agent from: $RELEASE_URL"
 
-        curl -L -o target/test-binaries/goldentooth-agent "$RELEASE_URL"
+        curl -L --fail-with-body -o target/test-binaries/goldentooth-agent "$RELEASE_URL"
         chmod +x target/test-binaries/goldentooth-agent
 
         # Verify installation
