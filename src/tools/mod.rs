@@ -47,28 +47,51 @@ impl TypeSafeMcpTool<ClusterPingArgs> for ClusterPingTool {
     }
 
     async fn execute(&self, _args: ClusterPingArgs) -> ToolResult<Value> {
-        // Minimal implementation that returns mock results
-        let mut nodes = HashMap::new();
+        use crate::cluster::ClusterClient;
 
-        // Mock ping results for all known nodes
+        let client = ClusterClient::new();
+        let mut nodes = HashMap::new();
+        let mut reachable_count = 0;
+
+        // Ping all known nodes
         for node in NodeName::valid_nodes() {
-            nodes.insert(
-                *node,
-                json!({
-                    "status": "reachable",
-                    "ping_time_ms": 1.2,
-                    "icmp_reachable": true,
-                    "tcp_port_22_open": true
-                }),
-            );
+            match client.ping_node(node).await {
+                Ok(result) => {
+                    nodes.insert(
+                        *node,
+                        json!({
+                            "status": result.status,
+                            "ping_time_ms": result.ping_time_ms,
+                            "icmp_reachable": result.icmp_reachable,
+                            "tcp_port_22_open": result.tcp_port_22_open
+                        }),
+                    );
+
+                    if result.icmp_reachable && result.tcp_port_22_open {
+                        reachable_count += 1;
+                    }
+                }
+                Err(error) => {
+                    nodes.insert(
+                        *node,
+                        json!({
+                            "status": "error",
+                            "ping_time_ms": 0.0,
+                            "icmp_reachable": false,
+                            "tcp_port_22_open": false,
+                            "error": error
+                        }),
+                    );
+                }
+            }
         }
 
         Ok(json!({
             "nodes": nodes,
             "summary": {
                 "total_nodes": nodes.len(),
-                "reachable_nodes": nodes.len(),
-                "unreachable_nodes": 0
+                "reachable_nodes": reachable_count,
+                "unreachable_nodes": nodes.len() - reachable_count
             }
         }))
     }
@@ -98,6 +121,9 @@ impl TypeSafeMcpTool<ClusterStatusArgs> for ClusterStatusTool {
     }
 
     async fn execute(&self, args: ClusterStatusArgs) -> ToolResult<Value> {
+        use crate::cluster::ClusterClient;
+
+        let client = ClusterClient::new();
         let nodes_to_check: Vec<&str> = match &args.node {
             Some(node) => vec![node.as_str()],
             None => NodeName::valid_nodes().to_vec(),
@@ -106,33 +132,47 @@ impl TypeSafeMcpTool<ClusterStatusArgs> for ClusterStatusTool {
         let mut node_statuses = HashMap::new();
 
         for node in nodes_to_check {
-            node_statuses.insert(
-                node,
-                json!({
-                    "hostname": node,
-                    "uptime_seconds": 86400,
-                    "load_average": [0.5, 0.3, 0.2],
-                    "memory_usage": {
-                        "used_mb": 512,
-                        "total_mb": 2048,
-                        "percentage": 25.0
-                    },
-                    "cpu_usage": {
-                        "percentage": 15.0,
-                        "temperature_c": 45.5
-                    },
-                    "disk_usage": {
-                        "used_gb": 8,
-                        "total_gb": 32,
-                        "percentage": 25.0
-                    },
-                    "network": {
-                        "interface": "eth0",
-                        "ip_address": format!("10.4.0.{}", (node.len() * 10) % 254)
-                    },
-                    "status": "healthy"
-                }),
-            );
+            match client.get_node_status(node).await {
+                Ok(status) => {
+                    node_statuses.insert(
+                        node,
+                        json!({
+                            "hostname": status.hostname,
+                            "uptime_seconds": status.uptime_seconds,
+                            "load_average": status.load_average,
+                            "memory_usage": {
+                                "used_mb": status.memory_usage.used_mb,
+                                "total_mb": status.memory_usage.total_mb,
+                                "percentage": status.memory_usage.percentage
+                            },
+                            "cpu_usage": {
+                                "percentage": status.cpu_usage.percentage,
+                                "temperature_c": status.cpu_usage.temperature_c
+                            },
+                            "disk_usage": {
+                                "used_gb": status.disk_usage.used_gb,
+                                "total_gb": status.disk_usage.total_gb,
+                                "percentage": status.disk_usage.percentage
+                            },
+                            "network": {
+                                "interface": status.network.interface,
+                                "ip_address": status.network.ip_address
+                            },
+                            "status": status.status
+                        }),
+                    );
+                }
+                Err(error) => {
+                    node_statuses.insert(
+                        node,
+                        json!({
+                            "hostname": node,
+                            "status": "error",
+                            "error": error
+                        }),
+                    );
+                }
+            }
         }
 
         Ok(json!({
@@ -171,6 +211,9 @@ impl TypeSafeMcpTool<ServiceStatusArgs> for ServiceStatusTool {
     }
 
     async fn execute(&self, args: ServiceStatusArgs) -> ToolResult<Value> {
+        use crate::cluster::ClusterClient;
+
+        let client = ClusterClient::new();
         let nodes_to_check: Vec<&str> = match &args.node {
             Some(node) => vec![node.as_str()],
             None => NodeName::valid_nodes().to_vec(),
@@ -179,26 +222,122 @@ impl TypeSafeMcpTool<ServiceStatusArgs> for ServiceStatusTool {
         let mut node_statuses = HashMap::new();
 
         for node in nodes_to_check {
-            node_statuses.insert(
-                node,
-                json!({
-                    "service": args.service.as_str(),
-                    "status": "active",
-                    "enabled": true,
-                    "running": true,
-                    "pid": 12345,
-                    "memory_usage_mb": 64,
-                    "cpu_usage_percent": 2.5,
-                    "uptime_seconds": 3600,
-                    "last_restart": "2024-01-01T12:00:00Z",
-                    "restart_count": 0
-                }),
-            );
+            match client.get_service_status(node, args.service.as_str()).await {
+                Ok(status) => {
+                    node_statuses.insert(
+                        node,
+                        json!({
+                            "service": status.service,
+                            "status": status.status,
+                            "enabled": status.enabled,
+                            "running": status.running,
+                            "pid": status.pid,
+                            "memory_usage_mb": status.memory_usage_mb,
+                            "cpu_usage_percent": status.cpu_usage_percent,
+                            "uptime_seconds": status.uptime_seconds,
+                            "last_restart": status.last_restart,
+                            "restart_count": status.restart_count
+                        }),
+                    );
+                }
+                Err(error) => {
+                    node_statuses.insert(
+                        node,
+                        json!({
+                            "service": args.service.as_str(),
+                            "status": "error",
+                            "error": error
+                        }),
+                    );
+                }
+            }
         }
 
         Ok(json!({
             "service": args.service.as_str(),
             "nodes": node_statuses,
+            "queried_at": chrono::Utc::now().to_rfc3339()
+        }))
+    }
+}
+
+/// Type-safe resource usage tool implementation
+pub struct ResourceUsageTool;
+
+#[async_trait]
+impl TypeSafeMcpTool<ResourceUsageArgs> for ResourceUsageTool {
+    fn description(&self) -> &str {
+        "Get memory and disk usage information for cluster nodes"
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "node": {
+                    "type": "string",
+                    "description": "Specific node to check (optional, defaults to all nodes)",
+                    "enum": NodeName::valid_nodes()
+                }
+            },
+            "additionalProperties": false
+        })
+    }
+
+    async fn execute(&self, args: ResourceUsageArgs) -> ToolResult<Value> {
+        use crate::cluster::ClusterClient;
+
+        let client = ClusterClient::new();
+        let nodes_to_check: Vec<&str> = match &args.node {
+            Some(node) => vec![node.as_str()],
+            None => NodeName::valid_nodes().to_vec(),
+        };
+
+        let mut node_resources = HashMap::new();
+
+        for node in nodes_to_check {
+            match client.get_node_status(node).await {
+                Ok(status) => {
+                    node_resources.insert(
+                        node,
+                        json!({
+                            "hostname": status.hostname,
+                            "memory": {
+                                "used_mb": status.memory_usage.used_mb,
+                                "total_mb": status.memory_usage.total_mb,
+                                "percentage": status.memory_usage.percentage,
+                                "free_mb": status.memory_usage.total_mb - status.memory_usage.used_mb
+                            },
+                            "disk": {
+                                "used_gb": status.disk_usage.used_gb,
+                                "total_gb": status.disk_usage.total_gb,
+                                "percentage": status.disk_usage.percentage,
+                                "free_gb": status.disk_usage.total_gb - status.disk_usage.used_gb
+                            },
+                            "cpu": {
+                                "percentage": status.cpu_usage.percentage,
+                                "temperature_c": status.cpu_usage.temperature_c,
+                                "load_average": status.load_average
+                            },
+                            "uptime_seconds": status.uptime_seconds
+                        }),
+                    );
+                }
+                Err(error) => {
+                    node_resources.insert(
+                        node,
+                        json!({
+                            "hostname": node,
+                            "status": "error",
+                            "error": error
+                        }),
+                    );
+                }
+            }
+        }
+
+        Ok(json!({
+            "nodes": node_resources,
             "queried_at": chrono::Utc::now().to_rfc3339()
         }))
     }
@@ -243,6 +382,8 @@ impl TypeSafeMcpTool<ShellCommandArgs> for ShellCommandTool {
     }
 
     async fn execute(&self, args: ShellCommandArgs) -> ToolResult<Value> {
+        use crate::cluster::ClusterClient;
+
         // Validate command safety at execution time as well
         args.validate().map_err(|e| {
             TypeSafeError::<error_contexts::Argument>::from_tool_argument_error(
@@ -252,29 +393,49 @@ impl TypeSafeMcpTool<ShellCommandArgs> for ShellCommandTool {
             .map_context::<error_contexts::Tool>()
         })?;
 
+        let client = ClusterClient::new();
         let target_node = args.node.as_ref().map(|n| n.as_str()).unwrap_or("allyrion");
-
-        let timeout = args.timeout.unwrap_or(30);
         let as_root = args.as_root.unwrap_or(false);
 
-        // Mock command execution
-        let mock_output = format!(
-            "Mock execution of '{}' on node '{}'",
-            args.command.as_str(),
-            target_node
-        );
+        let start_time = std::time::Instant::now();
 
-        Ok(json!({
-            "command": args.command.as_str(),
-            "node": target_node,
-            "as_root": as_root,
-            "timeout": timeout,
-            "exit_code": 0,
-            "stdout": mock_output,
-            "stderr": "",
-            "duration_seconds": 0.1,
-            "executed_at": chrono::Utc::now().to_rfc3339()
-        }))
+        match client
+            .exec_on_node(target_node, args.command.as_str(), as_root)
+            .await
+        {
+            Ok(result) => {
+                let duration = start_time.elapsed().as_secs_f64();
+
+                Ok(json!({
+                    "command": args.command.as_str(),
+                    "node": target_node,
+                    "as_root": as_root,
+                    "timeout": args.timeout.unwrap_or(30),
+                    "exit_code": result.exit_code,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "success": result.success,
+                    "duration_seconds": duration,
+                    "executed_at": chrono::Utc::now().to_rfc3339()
+                }))
+            }
+            Err(error) => {
+                let duration = start_time.elapsed().as_secs_f64();
+
+                Ok(json!({
+                    "command": args.command.as_str(),
+                    "node": target_node,
+                    "as_root": as_root,
+                    "timeout": args.timeout.unwrap_or(30),
+                    "exit_code": -1,
+                    "stdout": "",
+                    "stderr": error,
+                    "success": false,
+                    "duration_seconds": duration,
+                    "executed_at": chrono::Utc::now().to_rfc3339()
+                }))
+            }
+        }
     }
 }
 
@@ -298,6 +459,10 @@ pub async fn execute_tool_type_safe(tool_args: ToolArgs) -> ToolResult<Value> {
         }
         ToolArgs::ShellCommand(args) => {
             let tool = ShellCommandTool;
+            TypeSafeMcpTool::execute(&tool, args).await
+        }
+        ToolArgs::ResourceUsage(args) => {
+            let tool = ResourceUsageTool;
             TypeSafeMcpTool::execute(&tool, args).await
         }
         // Add other tools as they're implemented
@@ -371,6 +536,15 @@ pub fn parse_tool_arguments(tool_name: &str, params: Value) -> Result<ToolArgs, 
                 timeout,
             };
             Ok(ToolArgs::ShellCommand(args))
+        }
+        "resource_usage" => {
+            let node = if let Some(node_str) = params.get("node").and_then(|v| v.as_str()) {
+                Some(NodeName::new(node_str).map_err(|e| e.to_string())?)
+            } else {
+                None
+            };
+            let args = ResourceUsageArgs { node };
+            Ok(ToolArgs::ResourceUsage(args))
         }
         _ => Err(format!("unsupported tool '{tool_name}'")),
     }
