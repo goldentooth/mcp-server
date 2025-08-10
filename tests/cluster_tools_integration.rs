@@ -420,9 +420,7 @@ async fn test_concurrent_tool_calls() {
         }),
     ];
 
-    let futures = requests
-        .into_iter()
-        .map(process_mcp_request_direct);
+    let futures = requests.into_iter().map(process_mcp_request_direct);
     let responses = join_all(futures).await;
 
     // All requests should complete successfully
