@@ -3,6 +3,7 @@
 //! Tests for Server-Sent Events streaming functionality including stream lifecycle,
 //! cleanup behavior, concurrent connections, and compliance with requirements.
 
+use goldentooth_mcp::transport::HttpTransport;
 use http_body_util::{BodyExt, Full};
 use hyper::{Method, Request, StatusCode};
 use hyper_util::client::legacy::Client;
@@ -512,16 +513,47 @@ async fn test_actual_http_server_sse_integration() {
 }
 
 #[tokio::test]
-#[ignore] // Will be enabled once authentication is implemented
 async fn test_sse_authentication_required() {
     // Test that SSE connections require proper authentication
-    // Test that unauthenticated connections are rejected
-    // Test that invalid tokens are rejected
+    let transport = HttpTransport::new(true); // auth_required = true
+    let addr = transport
+        .start()
+        .await
+        .expect("Failed to start HTTP transport");
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("http://{addr}/mcp"))
+        .header("Accept", "text/event-stream")
+        .send()
+        .await
+        .expect("Failed to send SSE request");
+
+    // Should require authentication for SSE connections
+    assert_eq!(response.status(), 401);
 }
 
 #[tokio::test]
-#[ignore] // Will be enabled once HTTP transport is implemented
 async fn test_sse_origin_header_validation() {
     // Test Origin header validation for SSE connections
-    // Test DNS rebinding attack prevention
+    unsafe {
+        std::env::set_var("MCP_AUTH_REQUIRED", "false");
+    }
+    let transport = HttpTransport::new(false);
+    let addr = transport
+        .start()
+        .await
+        .expect("Failed to start HTTP transport");
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("http://{addr}/mcp"))
+        .header("Accept", "text/event-stream")
+        .header("Origin", "http://malicious.com")
+        .send()
+        .await
+        .expect("Failed to send SSE request");
+
+    // Should validate Origin header for SSE connections
+    assert_eq!(response.status(), 403);
 }
