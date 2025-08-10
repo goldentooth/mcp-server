@@ -27,9 +27,10 @@ impl ClusterClient {
         as_root: bool,
     ) -> Result<CommandResult, String> {
         // Use mock data in CI or when explicitly requested
-        if std::env::var("GOLDENTOOTH_MOCK_SSH").is_ok() 
-            || std::env::var("CI").is_ok() 
-            || std::env::var("GITHUB_ACTIONS").is_ok() {
+        if std::env::var("GOLDENTOOTH_MOCK_SSH").is_ok()
+            || std::env::var("CI").is_ok()
+            || std::env::var("GITHUB_ACTIONS").is_ok()
+        {
             return Ok(self.mock_command_result(node, command, as_root));
         }
         let full_command = if as_root {
@@ -65,9 +66,10 @@ impl ClusterClient {
     /// Ping a node to check connectivity
     pub async fn ping_node(&self, node: &str) -> Result<PingResult, String> {
         // Use mock data in CI or when explicitly requested
-        if std::env::var("GOLDENTOOTH_MOCK_SSH").is_ok() 
-            || std::env::var("CI").is_ok() 
-            || std::env::var("GITHUB_ACTIONS").is_ok() {
+        if std::env::var("GOLDENTOOTH_MOCK_SSH").is_ok()
+            || std::env::var("CI").is_ok()
+            || std::env::var("GITHUB_ACTIONS").is_ok()
+        {
             return Ok(PingResult {
                 icmp_reachable: true,
                 tcp_port_22_open: true,
@@ -125,9 +127,10 @@ impl ClusterClient {
     /// Get node status via node_exporter metrics
     pub async fn get_node_status(&self, node: &str) -> Result<NodeStatus, String> {
         // Use mock data in CI or when explicitly requested
-        if std::env::var("GOLDENTOOTH_MOCK_SSH").is_ok() 
-            || std::env::var("CI").is_ok() 
-            || std::env::var("GITHUB_ACTIONS").is_ok() {
+        if std::env::var("GOLDENTOOTH_MOCK_SSH").is_ok()
+            || std::env::var("CI").is_ok()
+            || std::env::var("GITHUB_ACTIONS").is_ok()
+        {
             return Ok(self.mock_node_status(node));
         }
         // Try to get metrics from node_exporter first
@@ -215,9 +218,10 @@ impl ClusterClient {
         service: &str,
     ) -> Result<ServiceStatus, String> {
         // Use mock data in CI or when explicitly requested
-        if std::env::var("GOLDENTOOTH_MOCK_SSH").is_ok() 
-            || std::env::var("CI").is_ok() 
-            || std::env::var("GITHUB_ACTIONS").is_ok() {
+        if std::env::var("GOLDENTOOTH_MOCK_SSH").is_ok()
+            || std::env::var("CI").is_ok()
+            || std::env::var("GITHUB_ACTIONS").is_ok()
+        {
             return Ok(self.mock_service_status(node, service));
         }
         let systemctl_cmd = format!("systemctl status {service} --no-pager -l");
@@ -269,7 +273,9 @@ impl ClusterClient {
             "cat /proc/loadavg" => "0.5 0.3 0.2 1/234 12345".to_string(),
             "cat /proc/meminfo" => "MemTotal: 2097152 kB\nMemAvailable: 1048576 kB".to_string(),
             _ if command.starts_with("df -h") => "/dev/sda1 30G 8G 20G 29% /".to_string(),
-            _ if command.starts_with("systemctl status") => "● service - Description\nActive: active (running)".to_string(),
+            _ if command.starts_with("systemctl status") => {
+                "● service - Description\nActive: active (running)".to_string()
+            }
             _ if command.starts_with("systemctl is-enabled") => "enabled".to_string(),
             _ => format!("Mock output for: {command}"),
         };
