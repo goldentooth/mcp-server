@@ -250,9 +250,9 @@ async fn test_error_propagation() {
     // This would fail if we tried to create an invalid tool argument:
     // But since we have type safety, we can't create invalid arguments
 
-    // Test unknown tool handling
-    let unknown_tool = ToolArgs::ResourceUsage(ResourceUsageArgs::default());
-    let result = execute_tool_type_safe(unknown_tool).await;
+    // Test unimplemented tool handling - ClusterInfo is defined but not implemented yet
+    let unimplemented_tool = ToolArgs::ClusterInfo(ClusterInfoArgs::default());
+    let result = execute_tool_type_safe(unimplemented_tool).await;
     assert!(result.is_err());
 
     // Check that the error is properly structured
