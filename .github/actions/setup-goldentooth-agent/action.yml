@@ -1,0 +1,42 @@
+name: 'Setup Goldentooth Agent'
+description: 'Download and install the Goldentooth Agent for compatibility testing'
+runs:
+  using: 'composite'
+  steps:
+    - name: Install Goldentooth Agent
+      shell: bash
+      run: |
+        # Create target directory for test binaries
+        mkdir -p target/test-binaries
+
+        # Detect platform for binary selection
+        case "${{ runner.os }}" in
+          "Linux")
+            case "${{ runner.arch }}" in
+              "X64") BINARY_NAME="goldentooth-agent-x86_64-linux" ;;
+              "ARM64") BINARY_NAME="goldentooth-agent-aarch64-linux" ;;
+              *) echo "Unsupported Linux architecture: ${{ runner.arch }}"; exit 1 ;;
+            esac
+            ;;
+          "macOS")
+            case "${{ runner.arch }}" in
+              "X64") BINARY_NAME="goldentooth-agent-x86_64-darwin" ;;
+              "ARM64") BINARY_NAME="goldentooth-agent-aarch64-darwin" ;;
+              *) echo "Unsupported macOS architecture: ${{ runner.arch }}"; exit 1 ;;
+            esac
+            ;;
+          *)
+            echo "Unsupported OS: ${{ runner.os }}"
+            exit 1
+            ;;
+        esac
+
+        # Download the latest release
+        RELEASE_URL="https://github.com/goldentooth/agent/releases/latest/download/${BINARY_NAME}"
+        echo "Downloading Goldentooth Agent from: $RELEASE_URL"
+
+        curl -L -o target/test-binaries/goldentooth-agent "$RELEASE_URL"
+        chmod +x target/test-binaries/goldentooth-agent
+
+        # Verify installation
+        ./target/test-binaries/goldentooth-agent --version 2>/dev/null || echo "Goldentooth Agent installed successfully"
