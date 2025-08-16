@@ -60,11 +60,17 @@ pub struct HttpTransport {
 impl HttpTransport {
     /// Create a new HTTP transport
     pub fn new(auth_required: bool) -> Self {
+        // Get port from environment variable, default to 0 (random port)
+        let port = std::env::var("MCP_PORT")
+            .ok()
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(0);
+
         // Determine binding address based on MCP_LOCAL environment variable
         let bind_addr = if std::env::var("MCP_LOCAL").is_ok_and(|v| !v.is_empty()) {
-            "127.0.0.1:0".parse().unwrap()
+            format!("127.0.0.1:{port}").parse().unwrap()
         } else {
-            "0.0.0.0:0".parse().unwrap()
+            format!("0.0.0.0:{port}").parse().unwrap()
         };
 
         Self {
