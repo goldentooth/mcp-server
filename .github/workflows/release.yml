@@ -55,6 +55,18 @@ jobs:
     - name: Run clippy
       run: cargo clippy --target ${{ matrix.target }} -- -D warnings
 
+    - name: Update Cargo.toml version
+      run: |
+        # Get the version from the git tag
+        TAG_NAME=$(git describe --tags --abbrev=0)
+        VERSION=${TAG_NAME#v}
+        echo "Updating Cargo.toml version to $VERSION"
+        # Use sed to update the version line in Cargo.toml
+        sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+        # Verify the change
+        echo "Updated Cargo.toml:"
+        grep "^version =" Cargo.toml
+
     - name: Build release binary
       run: |
         if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
