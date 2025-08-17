@@ -433,3 +433,203 @@ async fn test_concurrent_tool_calls() {
         assert!(response["result"].is_object() ^ response["error"].is_object());
     }
 }
+
+#[tokio::test]
+async fn test_cluster_info_comprehensive() {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "id": 13,
+        "params": {
+            "name": "cluster_info",
+            "arguments": {}
+        }
+    });
+
+    let response = process_mcp_request_direct(request).await;
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 13);
+    assert!(response["result"].is_object());
+
+    let result = &response["result"];
+    assert!(result["timestamp"].is_string());
+    assert_eq!(result["cluster_name"], "goldentooth");
+    assert!(result["total_nodes"].is_number());
+    assert!(result["nodes"].is_object());
+    assert!(result["services"].is_object());
+    assert!(result["summary"].is_object());
+
+    // Check summary structure
+    let summary = &result["summary"];
+    assert!(summary["nodes_reachable"].is_number());
+    assert!(summary["nodes_unreachable"].is_number());
+    assert!(summary["critical_services_up"].is_number());
+    assert!(summary["critical_services_down"].is_number());
+    assert!(summary["cluster_health"].is_string());
+}
+
+#[tokio::test]
+async fn test_journald_logs_basic() {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "id": 14,
+        "params": {
+            "name": "journald_logs",
+            "arguments": {
+                "lines": 10
+            }
+        }
+    });
+
+    let response = process_mcp_request_direct(request).await;
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 14);
+    assert!(response["result"].is_object());
+
+    let result = &response["result"];
+    assert_eq!(result["node"], "allyrion"); // default node
+    assert_eq!(result["lines_requested"], 10);
+    assert!(result["lines_returned"].is_number());
+    assert!(result["duration_seconds"].is_number());
+    assert!(result["queried_at"].is_string());
+    assert!(result["logs"].is_array());
+}
+
+#[tokio::test]
+async fn test_journald_logs_with_service_filter() {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "id": 15,
+        "params": {
+            "name": "journald_logs",
+            "arguments": {
+                "service": "ssh",
+                "lines": 5,
+                "priority": "6"
+            }
+        }
+    });
+
+    let response = process_mcp_request_direct(request).await;
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 15);
+    assert!(response["result"].is_object());
+
+    let result = &response["result"];
+    assert_eq!(result["service_filter"], "ssh");
+    assert_eq!(result["priority_filter"], "6");
+    assert_eq!(result["lines_requested"], 5);
+}
+
+#[tokio::test]
+async fn test_journald_logs_invalid_follow() {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "id": 16,
+        "params": {
+            "name": "journald_logs",
+            "arguments": {
+                "follow": true
+            }
+        }
+    });
+
+    let response = process_mcp_request_direct(request).await;
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 16);
+
+    // Should have an error field due to unsupported follow parameter
+    assert!(response["error"].is_object());
+    assert_eq!(response["error"]["code"], -32602); // Invalid params
+}
+
+#[tokio::test]
+async fn test_loki_logs_basic() {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "id": 17,
+        "params": {
+            "name": "loki_logs",
+            "arguments": {
+                "query": "{job=\"consul\"}",
+                "limit": 5
+            }
+        }
+    });
+
+    let response = process_mcp_request_direct(request).await;
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 17);
+    assert!(response["result"].is_object());
+
+    let result = &response["result"];
+    assert_eq!(result["query"], "{job=\"consul\"}");
+    assert_eq!(result["limit"], 5);
+    assert!(result["duration_seconds"].is_number());
+    assert!(result["queried_at"].is_string());
+    assert!(result["logs"].is_array());
+}
+
+#[tokio::test]
+async fn test_loki_logs_invalid_query() {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "id": 18,
+        "params": {
+            "name": "loki_logs",
+            "arguments": {
+                "query": "invalid query without braces"
+            }
+        }
+    });
+
+    let response = process_mcp_request_direct(request).await;
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 18);
+
+    // Should have an error field due to invalid LogQL query
+    assert!(response["error"].is_object());
+    assert_eq!(response["error"]["code"], -32602); // Invalid params
+}
+
+#[tokio::test]
+async fn test_loki_logs_with_time_range() {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "id": 19,
+        "params": {
+            "name": "loki_logs",
+            "arguments": {
+                "query": "{service=\"nomad\"}",
+                "start": "1h",
+                "end": "now",
+                "direction": "backward",
+                "limit": 10
+            }
+        }
+    });
+
+    let response = process_mcp_request_direct(request).await;
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 19);
+    assert!(response["result"].is_object());
+
+    let result = &response["result"];
+    assert_eq!(result["query"], "{service=\"nomad\"}");
+    assert_eq!(result["start"], "1h");
+    assert_eq!(result["end"], "now");
+    assert_eq!(result["limit"], 10);
+}

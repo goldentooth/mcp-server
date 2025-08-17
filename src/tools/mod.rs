@@ -439,6 +439,577 @@ impl TypeSafeMcpTool<ShellCommandArgs> for ShellCommandTool {
     }
 }
 
+/// Type-safe cluster info tool implementation
+pub struct ClusterInfoTool;
+
+#[async_trait]
+impl TypeSafeMcpTool<ClusterInfoArgs> for ClusterInfoTool {
+    fn description(&self) -> &str {
+        "Get comprehensive cluster information including all nodes, services, and resource usage"
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false,
+            "description": "No arguments required - returns comprehensive cluster state"
+        })
+    }
+
+    async fn execute(&self, _args: ClusterInfoArgs) -> ToolResult<Value> {
+        use crate::cluster::ClusterClient;
+
+        let client = ClusterClient::new();
+        let mut cluster_data = json!({
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "cluster_name": "goldentooth",
+            "total_nodes": NodeName::valid_nodes().len(),
+            "nodes": {},
+            "services": {},
+            "summary": {
+                "nodes_reachable": 0,
+                "nodes_unreachable": 0,
+                "critical_services_up": 0,
+                "critical_services_down": 0,
+                "total_memory_gb": 0.0,
+                "total_disk_gb": 0.0,
+                "average_cpu_usage": 0.0,
+                "average_load": 0.0
+            }
+        });
+
+        let mut nodes_reachable = 0;
+        let mut total_memory_gb = 0.0;
+        let mut total_disk_gb = 0.0;
+        let mut cpu_usage_sum = 0.0;
+        let mut load_sum = 0.0;
+        let mut responsive_nodes = 0;
+
+        // Gather node information
+        for node in NodeName::valid_nodes() {
+            match client.get_node_status(node).await {
+                Ok(status) => {
+                    nodes_reachable += 1;
+                    responsive_nodes += 1;
+
+                    total_memory_gb += status.memory_usage.total_mb as f64 / 1024.0;
+                    total_disk_gb += status.disk_usage.total_gb as f64;
+                    cpu_usage_sum += status.cpu_usage.percentage;
+                    if !status.load_average.is_empty() {
+                        load_sum += status.load_average[0]; // 1-minute load average
+                    }
+
+                    cluster_data["nodes"][node] = json!({
+                        "status": "online",
+                        "hostname": status.hostname,
+                        "uptime_seconds": status.uptime_seconds,
+                        "load_average": status.load_average,
+                        "memory": {
+                            "used_mb": status.memory_usage.used_mb,
+                            "total_mb": status.memory_usage.total_mb,
+                            "percentage": status.memory_usage.percentage
+                        },
+                        "cpu": {
+                            "percentage": status.cpu_usage.percentage,
+                            "temperature_c": status.cpu_usage.temperature_c
+                        },
+                        "disk": {
+                            "used_gb": status.disk_usage.used_gb,
+                            "total_gb": status.disk_usage.total_gb,
+                            "percentage": status.disk_usage.percentage
+                        },
+                        "network": {
+                            "interface": status.network.interface,
+                            "ip_address": status.network.ip_address
+                        }
+                    });
+                }
+                Err(error) => {
+                    cluster_data["nodes"][node] = json!({
+                        "status": "offline",
+                        "hostname": node,
+                        "error": error
+                    });
+                }
+            }
+        }
+
+        // Check critical services across the cluster
+        let critical_services = ["consul", "nomad", "vault", "kubernetes", "ssh"];
+        let mut services_up = 0;
+        let mut services_down = 0;
+
+        for service in &critical_services {
+            let mut service_nodes = json!({});
+            let mut healthy_instances = 0;
+            let mut total_instances = 0;
+
+            // Check service on each node (for services that run on all nodes)
+            for node in NodeName::valid_nodes() {
+                total_instances += 1;
+                match client.get_service_status(node, service).await {
+                    Ok(status) if status.running => {
+                        healthy_instances += 1;
+                        service_nodes[node] = json!({
+                            "status": "running",
+                            "enabled": status.enabled,
+                            "pid": status.pid,
+                            "memory_usage_mb": status.memory_usage_mb,
+                            "uptime_seconds": status.uptime_seconds
+                        });
+                    }
+                    Ok(status) => {
+                        service_nodes[node] = json!({
+                            "status": "stopped",
+                            "enabled": status.enabled
+                        });
+                    }
+                    Err(error) => {
+                        service_nodes[node] = json!({
+                            "status": "error",
+                            "error": error
+                        });
+                    }
+                }
+            }
+
+            let service_health = if healthy_instances > 0 {
+                services_up += 1;
+                "healthy"
+            } else {
+                services_down += 1;
+                "unhealthy"
+            };
+
+            cluster_data["services"][service] = json!({
+                "overall_status": service_health,
+                "healthy_instances": healthy_instances,
+                "total_instances": total_instances,
+                "availability_percentage": (healthy_instances as f64 / total_instances as f64) * 100.0,
+                "nodes": service_nodes
+            });
+        }
+
+        // Update summary statistics
+        cluster_data["summary"]["nodes_reachable"] = json!(nodes_reachable);
+        cluster_data["summary"]["nodes_unreachable"] =
+            json!(NodeName::valid_nodes().len() - nodes_reachable);
+        cluster_data["summary"]["critical_services_up"] = json!(services_up);
+        cluster_data["summary"]["critical_services_down"] = json!(services_down);
+        cluster_data["summary"]["total_memory_gb"] = json!(total_memory_gb);
+        cluster_data["summary"]["total_disk_gb"] = json!(total_disk_gb);
+
+        if responsive_nodes > 0 {
+            cluster_data["summary"]["average_cpu_usage"] =
+                json!(cpu_usage_sum / responsive_nodes as f64);
+            cluster_data["summary"]["average_load"] = json!(load_sum / responsive_nodes as f64);
+        }
+
+        cluster_data["summary"]["cluster_health"] = json!(if nodes_reachable
+            == NodeName::valid_nodes().len()
+            && services_down == 0
+        {
+            "healthy"
+        } else if nodes_reachable > NodeName::valid_nodes().len() / 2 && services_up > services_down
+        {
+            "degraded"
+        } else {
+            "critical"
+        });
+
+        Ok(cluster_data)
+    }
+}
+
+/// Type-safe journald logs tool implementation
+pub struct JournaldLogsTool;
+
+#[async_trait]
+impl TypeSafeMcpTool<JournaldLogsArgs> for JournaldLogsTool {
+    fn description(&self) -> &str {
+        "Query systemd journal logs from cluster nodes with filtering options"
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "node": {
+                    "type": "string",
+                    "description": "Specific node to query logs from (optional, defaults to allyrion)",
+                    "enum": NodeName::valid_nodes()
+                },
+                "service": {
+                    "type": "string",
+                    "description": "Specific systemd service to filter logs for (optional)"
+                },
+                "priority": {
+                    "type": "string",
+                    "description": "Log priority level (0=emergency, 7=debug)",
+                    "enum": ["0", "1", "2", "3", "4", "5", "6", "7"]
+                },
+                "since": {
+                    "type": "string",
+                    "description": "Show logs since this time (e.g., '1 hour ago', '2023-12-01')"
+                },
+                "lines": {
+                    "type": "integer",
+                    "description": "Maximum number of log lines to return",
+                    "minimum": 1,
+                    "maximum": 1000,
+                    "default": 100
+                },
+                "follow": {
+                    "type": "boolean",
+                    "description": "Follow logs in real-time (not supported, always false)",
+                    "default": false
+                }
+            },
+            "additionalProperties": false
+        })
+    }
+
+    async fn execute(&self, args: JournaldLogsArgs) -> ToolResult<Value> {
+        use crate::cluster::ClusterClient;
+
+        // Validate arguments
+        args.validate().map_err(|e| {
+            TypeSafeError::<error_contexts::Argument>::from_tool_argument_error(
+                e,
+                MessageId::Number(0),
+            )
+            .map_context::<error_contexts::Tool>()
+        })?;
+
+        let client = ClusterClient::new();
+        let target_node = args.node.as_ref().map(|n| n.as_str()).unwrap_or("allyrion");
+
+        // Build journalctl command with filters
+        let mut cmd_parts = vec!["journalctl", "--no-pager", "--output=json"];
+
+        // Add service filter if specified
+        if let Some(service) = &args.service {
+            cmd_parts.push("-u");
+            cmd_parts.push(service.as_str());
+        }
+
+        // Add priority filter if specified
+        if let Some(priority) = &args.priority {
+            cmd_parts.push("-p");
+            cmd_parts.push(priority.as_str());
+        }
+
+        // Add time filter if specified
+        if let Some(since) = &args.since {
+            cmd_parts.push("--since");
+            cmd_parts.push(since);
+        }
+
+        // Add line limit
+        let lines = args.lines.unwrap_or(100);
+        let lines_str = lines.to_string();
+        cmd_parts.push("-n");
+        cmd_parts.push(&lines_str);
+
+        let command = cmd_parts.join(" ");
+        let start_time = std::time::Instant::now();
+
+        match client.exec_on_node(target_node, &command, false).await {
+            Ok(result) => {
+                let duration = start_time.elapsed().as_secs_f64();
+
+                // Parse JSON log entries
+                let mut log_entries = Vec::new();
+                for line in result.stdout.lines() {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+
+                    match serde_json::from_str::<Value>(line) {
+                        Ok(entry) => {
+                            // Extract relevant fields from journald JSON format
+                            let formatted_entry = json!({
+                                "timestamp": entry.get("__REALTIME_TIMESTAMP")
+                                    .and_then(|t| t.as_str())
+                                    .map(|ts| {
+                                        // Convert microseconds timestamp to RFC3339
+                                        if let Ok(micros) = ts.parse::<u64>() {
+                                            let secs = micros / 1_000_000;
+                                            chrono::DateTime::from_timestamp(secs as i64, 0)
+                                                .map(|dt| dt.to_rfc3339())
+                                                .unwrap_or_else(|| ts.to_string())
+                                        } else {
+                                            ts.to_string()
+                                        }
+                                    })
+                                    .unwrap_or_else(|| "unknown".to_string()),
+                                "hostname": entry.get("_HOSTNAME").and_then(|h| h.as_str()).unwrap_or(target_node),
+                                "service": entry.get("_SYSTEMD_UNIT").and_then(|u| u.as_str()).unwrap_or("unknown"),
+                                "priority": entry.get("PRIORITY").and_then(|p| p.as_str()).unwrap_or("6"),
+                                "message": entry.get("MESSAGE").and_then(|m| m.as_str()).unwrap_or(""),
+                                "pid": entry.get("_PID").and_then(|p| p.as_str()),
+                                "boot_id": entry.get("_BOOT_ID").and_then(|b| b.as_str()),
+                                "machine_id": entry.get("_MACHINE_ID").and_then(|m| m.as_str())
+                            });
+                            log_entries.push(formatted_entry);
+                        }
+                        Err(_) => {
+                            // If JSON parsing fails, treat as plain text log
+                            log_entries.push(json!({
+                                "timestamp": chrono::Utc::now().to_rfc3339(),
+                                "hostname": target_node,
+                                "service": "unknown",
+                                "priority": "6",
+                                "message": line,
+                                "raw": true
+                            }));
+                        }
+                    }
+                }
+
+                Ok(json!({
+                    "node": target_node,
+                    "service_filter": args.service.as_ref().map(|s| s.as_str()),
+                    "priority_filter": args.priority.as_ref().map(|p| p.as_str()),
+                    "since_filter": args.since.as_ref(),
+                    "lines_requested": lines,
+                    "lines_returned": log_entries.len(),
+                    "command": command,
+                    "duration_seconds": duration,
+                    "queried_at": chrono::Utc::now().to_rfc3339(),
+                    "logs": log_entries
+                }))
+            }
+            Err(error) => {
+                let duration = start_time.elapsed().as_secs_f64();
+
+                Ok(json!({
+                    "node": target_node,
+                    "service_filter": args.service.as_ref().map(|s| s.as_str()),
+                    "priority_filter": args.priority.as_ref().map(|p| p.as_str()),
+                    "since_filter": args.since.as_ref(),
+                    "lines_requested": lines,
+                    "lines_returned": 0,
+                    "command": command,
+                    "duration_seconds": duration,
+                    "queried_at": chrono::Utc::now().to_rfc3339(),
+                    "error": error,
+                    "logs": []
+                }))
+            }
+        }
+    }
+}
+
+/// Type-safe Loki logs tool implementation
+pub struct LokiLogsTool;
+
+#[async_trait]
+impl TypeSafeMcpTool<LokiLogsArgs> for LokiLogsTool {
+    fn description(&self) -> &str {
+        "Query Loki logs using LogQL syntax from the cluster logging infrastructure"
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "LogQL query string (e.g., '{job=\"consul\"}', '{service=\"nomad\"} |= \"error\"')"
+                },
+                "start": {
+                    "type": "string",
+                    "description": "Start time for query (RFC3339 or relative like '1h')"
+                },
+                "end": {
+                    "type": "string",
+                    "description": "End time for query (RFC3339 or relative like 'now')"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of log entries to return",
+                    "minimum": 1,
+                    "maximum": 5000,
+                    "default": 100
+                },
+                "direction": {
+                    "type": "string",
+                    "description": "Query direction",
+                    "enum": ["forward", "backward"],
+                    "default": "backward"
+                }
+            },
+            "required": ["query"],
+            "additionalProperties": false
+        })
+    }
+
+    async fn execute(&self, args: LokiLogsArgs) -> ToolResult<Value> {
+        use crate::cluster::ClusterClient;
+
+        let client = ClusterClient::new();
+
+        // Loki API endpoint - assuming it's accessible from the cluster
+        let loki_url = "http://loki.services.goldentooth.net:3100";
+
+        // Build query string
+        let mut query_parts = vec![format!(
+            "query={}",
+            urlencoding::encode(args.query.as_str())
+        )];
+
+        if let Some(start) = &args.start {
+            query_parts.push(format!("start={}", urlencoding::encode(start)));
+        }
+
+        if let Some(end) = &args.end {
+            query_parts.push(format!("end={}", urlencoding::encode(end)));
+        }
+
+        if let Some(limit) = args.limit {
+            query_parts.push(format!("limit={limit}"));
+        }
+
+        if let Some(direction) = &args.direction {
+            let direction_str = match direction {
+                LogDirection::Forward => "forward",
+                LogDirection::Backward => "backward",
+            };
+            query_parts.push(format!("direction={direction_str}"));
+        }
+
+        let query_string = query_parts.join("&");
+
+        let full_url = format!("{loki_url}/loki/api/v1/query_range?{query_string}");
+
+        // Use curl to query Loki from a cluster node that has access
+        let curl_command = format!("curl -s -G '{full_url}' -H 'Accept: application/json'");
+
+        let start_time = std::time::Instant::now();
+
+        match client.exec_on_node("allyrion", &curl_command, false).await {
+            Ok(result) => {
+                let duration = start_time.elapsed().as_secs_f64();
+
+                if !result.success {
+                    return Ok(json!({
+                        "query": args.query.as_str(),
+                        "loki_url": loki_url,
+                        "start": args.start,
+                        "end": args.end,
+                        "limit": args.limit.unwrap_or(100),
+                        "direction": args.direction.unwrap_or(LogDirection::Backward),
+                        "duration_seconds": duration,
+                        "queried_at": chrono::Utc::now().to_rfc3339(),
+                        "error": format!("Loki query failed: {}", result.stderr),
+                        "logs": []
+                    }));
+                }
+
+                // Parse Loki response
+                match serde_json::from_str::<Value>(&result.stdout) {
+                    Ok(loki_response) => {
+                        let mut formatted_logs = Vec::new();
+
+                        if let Some(data) = loki_response.get("data") {
+                            if let Some(result_array) =
+                                data.get("result").and_then(|r| r.as_array())
+                            {
+                                for stream in result_array {
+                                    let empty_labels = json!({});
+                                    let stream_labels =
+                                        stream.get("stream").unwrap_or(&empty_labels);
+
+                                    if let Some(values) =
+                                        stream.get("values").and_then(|v| v.as_array())
+                                    {
+                                        for value_pair in values {
+                                            if let Some(pair) = value_pair.as_array() {
+                                                if pair.len() >= 2 {
+                                                    let timestamp_ns =
+                                                        pair[0].as_str().unwrap_or("0");
+                                                    let log_line = pair[1].as_str().unwrap_or("");
+
+                                                    // Convert nanosecond timestamp to RFC3339
+                                                    let timestamp = if let Ok(ns) =
+                                                        timestamp_ns.parse::<u64>()
+                                                    {
+                                                        let secs = ns / 1_000_000_000;
+                                                        let nanos = (ns % 1_000_000_000) as u32;
+                                                        chrono::DateTime::from_timestamp(
+                                                            secs as i64,
+                                                            nanos,
+                                                        )
+                                                        .map(|dt| dt.to_rfc3339())
+                                                        .unwrap_or_else(|| timestamp_ns.to_string())
+                                                    } else {
+                                                        timestamp_ns.to_string()
+                                                    };
+
+                                                    formatted_logs.push(json!({
+                                                        "timestamp": timestamp,
+                                                        "message": log_line,
+                                                        "stream": stream_labels
+                                                    }));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Ok(json!({
+                            "query": args.query.as_str(),
+                            "loki_url": loki_url,
+                            "start": args.start,
+                            "end": args.end,
+                            "limit": args.limit.unwrap_or(100),
+                            "direction": args.direction.unwrap_or(LogDirection::Backward),
+                            "duration_seconds": duration,
+                            "queried_at": chrono::Utc::now().to_rfc3339(),
+                            "logs_returned": formatted_logs.len(),
+                            "logs": formatted_logs,
+                            "raw_response_status": loki_response.get("status").and_then(|s| s.as_str()).unwrap_or("unknown")
+                        }))
+                    }
+                    Err(parse_error) => Ok(json!({
+                        "query": args.query.as_str(),
+                        "loki_url": loki_url,
+                        "start": args.start,
+                        "end": args.end,
+                        "limit": args.limit.unwrap_or(100),
+                        "direction": args.direction.unwrap_or(LogDirection::Backward),
+                        "duration_seconds": duration,
+                        "queried_at": chrono::Utc::now().to_rfc3339(),
+                        "error": format!("Failed to parse Loki response: {}", parse_error),
+                        "raw_stdout": result.stdout,
+                        "logs": []
+                    })),
+                }
+            }
+            Err(error) => {
+                let duration = start_time.elapsed().as_secs_f64();
+
+                Ok(json!({
+                    "query": args.query.as_str(),
+                    "loki_url": loki_url,
+                    "start": args.start,
+                    "end": args.end,
+                    "limit": args.limit.unwrap_or(100),
+                    "direction": args.direction.unwrap_or(LogDirection::Backward),
+                    "duration_seconds": duration,
+                    "queried_at": chrono::Utc::now().to_rfc3339(),
+                    "error": format!("Failed to execute Loki query: {}", error),
+                    "logs": []
+                }))
+            }
+        }
+    }
+}
+
 /// Type-safe tool execution function
 ///
 /// This function takes strongly-typed tool arguments and executes the appropriate tool.
@@ -463,6 +1034,18 @@ pub async fn execute_tool_type_safe(tool_args: ToolArgs) -> ToolResult<Value> {
         }
         ToolArgs::ResourceUsage(args) => {
             let tool = ResourceUsageTool;
+            TypeSafeMcpTool::execute(&tool, args).await
+        }
+        ToolArgs::ClusterInfo(args) => {
+            let tool = ClusterInfoTool;
+            TypeSafeMcpTool::execute(&tool, args).await
+        }
+        ToolArgs::JournaldLogs(args) => {
+            let tool = JournaldLogsTool;
+            TypeSafeMcpTool::execute(&tool, args).await
+        }
+        ToolArgs::LokiLogs(args) => {
+            let tool = LokiLogsTool;
             TypeSafeMcpTool::execute(&tool, args).await
         }
         // Add other tools as they're implemented
@@ -545,6 +1128,108 @@ pub fn parse_tool_arguments(tool_name: &str, params: Value) -> Result<ToolArgs, 
             };
             let args = ResourceUsageArgs { node };
             Ok(ToolArgs::ResourceUsage(args))
+        }
+        "cluster_info" => {
+            let args = ClusterInfoArgs::default();
+            Ok(ToolArgs::ClusterInfo(args))
+        }
+        "journald_logs" => {
+            let node = if let Some(node_str) = params.get("node").and_then(|v| v.as_str()) {
+                Some(NodeName::new(node_str).map_err(|e| e.to_string())?)
+            } else {
+                None
+            };
+
+            let service = if let Some(service_str) = params.get("service").and_then(|v| v.as_str())
+            {
+                Some(ServiceName::new(service_str).map_err(|e| e.to_string())?)
+            } else {
+                None
+            };
+
+            let priority =
+                if let Some(priority_str) = params.get("priority").and_then(|v| v.as_str()) {
+                    match priority_str {
+                        "0" => Some(LogPriority::Emergency),
+                        "1" => Some(LogPriority::Alert),
+                        "2" => Some(LogPriority::Critical),
+                        "3" => Some(LogPriority::Error),
+                        "4" => Some(LogPriority::Warning),
+                        "5" => Some(LogPriority::Notice),
+                        "6" => Some(LogPriority::Info),
+                        "7" => Some(LogPriority::Debug),
+                        _ => {
+                            return Err(format!(
+                                "Invalid priority level: {priority_str}. Must be 0-7"
+                            ));
+                        }
+                    }
+                } else {
+                    None
+                };
+
+            let since = params
+                .get("since")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let lines = params
+                .get("lines")
+                .and_then(|v| v.as_u64())
+                .map(|l| l as u32);
+            let follow = params.get("follow").and_then(|v| v.as_bool());
+
+            let args = JournaldLogsArgs {
+                node,
+                service,
+                priority,
+                since,
+                lines,
+                follow,
+            };
+            Ok(ToolArgs::JournaldLogs(args))
+        }
+        "loki_logs" => {
+            let query_str = params
+                .get("query")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing required parameter: query")?;
+
+            let query = LogQLQuery::new(query_str).map_err(|e| e.to_string())?;
+
+            let start = params
+                .get("start")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let end = params.get("end").and_then(|v| v.as_str()).map(String::from);
+            let limit = params
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|l| l as u32);
+
+            let direction = if let Some(direction_str) =
+                params.get("direction").and_then(|v| v.as_str())
+            {
+                match direction_str.to_lowercase().as_str() {
+                    "forward" => Some(LogDirection::Forward),
+                    "backward" => Some(LogDirection::Backward),
+                    _ => {
+                        return Err(format!(
+                            "Invalid direction: {direction_str}. Must be 'forward' or 'backward'"
+                        ));
+                    }
+                }
+            } else {
+                None
+            };
+
+            let args = LokiLogsArgs {
+                query,
+                start,
+                end,
+                limit,
+                direction,
+            };
+            Ok(ToolArgs::LokiLogs(args))
         }
         _ => Err(format!("unsupported tool '{tool_name}'")),
     }
