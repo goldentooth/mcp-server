@@ -14,8 +14,7 @@ use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 
-mod common;
-use common::test_helpers::ResponseAssertions;
+use crate::common::test_helpers::ResponseAssertions;
 
 /// Authentication test helper for managing JWT tokens and OAuth flows
 pub struct AuthTestHelper {

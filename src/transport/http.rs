@@ -3,16 +3,14 @@
 //! HTTP transport with SSE streaming support for MCP server.
 //! Supports environment-based binding and authentication.
 
+use crate::auth::check_authentication;
 use crate::protocol::process_json_request;
 use crate::types::McpStreams;
-use chrono;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode, body::Incoming, header};
 use hyper_util::rt::TokioIo;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -24,14 +22,6 @@ use tokio::net::TcpListener;
 const MAX_CONNECTIONS: usize = 100;
 const MAX_PAYLOAD_SIZE: usize = 1024 * 1024; // 1MB
 const CONNECTION_TIMEOUT_SECS: u64 = 30;
-
-/// JWT Claims structure
-#[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    sub: String,
-    exp: usize,
-    iat: usize,
-}
 
 /// Connection guard for automatic connection count management
 struct ConnectionGuard {
@@ -301,116 +291,6 @@ fn is_sse_request(req: &Request<Incoming>) -> bool {
         .unwrap_or(false)
 }
 
-/// Check authentication (placeholder - would integrate with actual auth system)
-async fn check_authentication(req: &Request<Incoming>) -> Result<(), Response<Full<Bytes>>> {
-    // Check for Authorization header
-    if let Some(auth_header) = req.headers().get(header::AUTHORIZATION) {
-        if let Ok(auth_str) = auth_header.to_str() {
-            // Extract bearer token
-            if let Some(token) = extract_bearer_token(auth_str) {
-                // Validate JWT token with cluster PKI
-                if validate_jwt_token(token).await {
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    // Return authentication required error
-    let error_response = json!({
-        "jsonrpc": "2.0",
-        "id": null,
-        "error": {
-            "code": -32001,
-            "message": "Authentication required",
-            "data": {
-                "type": "AuthenticationError",
-                "details": "HTTP transport requires valid JWT token"
-            }
-        }
-    });
-
-    Err(Response::builder()
-        .status(StatusCode::UNAUTHORIZED)
-        .header("Content-Type", "application/json")
-        .body(Full::new(Bytes::from(error_response.to_string())))
-        .unwrap())
-}
-
-/// Extract bearer token from Authorization header
-fn extract_bearer_token(auth_header: &str) -> Option<&str> {
-    if auth_header.to_lowercase().starts_with("bearer ") {
-        let token = auth_header[7..].trim_start();
-        if token.is_empty() { None } else { Some(token) }
-    } else {
-        None
-    }
-}
-
-/// Validate JWT token using cluster PKI
-async fn validate_jwt_token(token: &str) -> bool {
-    // Get cluster CA certificate for JWT validation
-    let ca_cert_path = "/etc/ssl/certs/goldentooth.pem";
-
-    // Try to read the public key from cluster CA
-    let public_key = match std::fs::read(ca_cert_path) {
-        Ok(cert_data) => {
-            // For now, use a simple approach - in production, extract public key from cert
-            match DecodingKey::from_rsa_pem(&cert_data) {
-                Ok(key) => Some(key),
-                Err(_) => {
-                    eprintln!("Failed to parse cluster CA certificate for JWT validation");
-                    None
-                }
-            }
-        }
-        Err(_) => {
-            // Fallback: use a default validation approach for development
-            eprintln!("Cluster CA certificate not found, using fallback validation");
-            None
-        }
-    };
-
-    // If we have a public key, validate with it; otherwise use fallback
-    if let Some(key) = public_key {
-        // Validate token with cluster CA
-        let mut validation = Validation::new(Algorithm::RS256);
-        validation.validate_exp = true;
-
-        match decode::<Claims>(token, &key, &validation) {
-            Ok(token_data) => {
-                // Additional validation: check subject and expiration
-                let now = chrono::Utc::now().timestamp() as usize;
-                !token_data.claims.sub.is_empty() && token_data.claims.exp > now
-            }
-            Err(err) => {
-                eprintln!("JWT validation failed: {err:?}");
-                false
-            }
-        }
-    } else {
-        // Fallback validation for development
-        let parts: Vec<&str> = token.split('.').collect();
-        if parts.len() != 3 {
-            return false;
-        }
-
-        // Try to decode without signature verification (development only)
-        let mut validation = Validation::new(Algorithm::RS256);
-        validation.insecure_disable_signature_validation();
-        validation.validate_exp = true;
-
-        match decode::<Claims>(token, &DecodingKey::from_secret(&[]), &validation) {
-            Ok(token_data) => {
-                // Check expiration
-                let now = chrono::Utc::now().timestamp() as usize;
-                token_data.claims.exp > now
-            }
-            Err(_) => false,
-        }
-    }
-}
-
 /// Validate Origin header to prevent DNS rebinding attacks
 #[allow(clippy::result_large_err)]
 fn validate_origin_header(req: &Request<Incoming>) -> Result<(), Response<Full<Bytes>>> {
@@ -524,6 +404,7 @@ fn is_valid_origin(origin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::bearer::extract_bearer_token;
     use tokio::time::{Duration, sleep};
 
     #[tokio::test]

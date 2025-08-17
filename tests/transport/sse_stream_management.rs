@@ -14,8 +14,7 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::time::{sleep, timeout};
 
-mod common;
-use common::test_helpers::{McpRequestBuilders, ResponseAssertions};
+use crate::common::test_helpers::{McpRequestBuilders, ResponseAssertions};
 
 /// SSE Stream test helper for managing event stream connections
 pub struct SseStreamTester {

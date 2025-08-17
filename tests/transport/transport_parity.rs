@@ -12,8 +12,7 @@ use serde_json::{Value, json};
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
-mod common;
-use common::test_helpers::{
+use crate::common::test_helpers::{
     McpRequestBuilders, McpRequestProcessor, ResponseAssertions, TestStreamsBuilder,
 };
 

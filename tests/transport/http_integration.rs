@@ -11,8 +11,7 @@ use serde_json::Value;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 
-mod common;
-use common::test_helpers::{McpRequestBuilders, ResponseAssertions};
+use crate::common::test_helpers::{McpRequestBuilders, ResponseAssertions};
 
 #[tokio::test]
 async fn test_http_transport_basic_startup() {
