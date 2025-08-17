@@ -535,18 +535,38 @@ impl TypeSafeMcpTool<ClusterInfoArgs> for ClusterInfoTool {
             }
         }
 
-        // Check critical services across the cluster
-        let critical_services = ["consul", "nomad", "vault", "kubernetes", "ssh"];
+        // Intelligent service discovery and checking
+        let mut all_discovered_services = std::collections::HashSet::new();
+        let mut node_service_map = std::collections::HashMap::new();
+
+        // First pass: discover what services exist on each node
+        for node in NodeName::valid_nodes() {
+            if let Ok(services) = client.get_available_services(node).await {
+                node_service_map.insert(node.to_string(), services.clone());
+                for service in services {
+                    all_discovered_services.insert(service);
+                }
+            }
+        }
+
         let mut services_up = 0;
         let mut services_down = 0;
 
-        for service in &critical_services {
+        // Second pass: check status of discovered services
+        for service in &all_discovered_services {
             let mut service_nodes = json!({});
             let mut healthy_instances = 0;
             let mut total_instances = 0;
 
-            // Check service on each node (for services that run on all nodes)
             for node in NodeName::valid_nodes() {
+                // Only check this service if it exists on this node
+                if let Some(node_services) = node_service_map.get(&node.to_string()) {
+                    if !node_services.contains(service) {
+                        // Service doesn't exist on this node - skip
+                        continue;
+                    }
+                }
+
                 total_instances += 1;
                 match client.get_service_status(node, service).await {
                     Ok(status) if status.running => {
@@ -561,15 +581,20 @@ impl TypeSafeMcpTool<ClusterInfoArgs> for ClusterInfoTool {
                     }
                     Ok(status) => {
                         service_nodes[node] = json!({
-                            "status": "stopped",
+                            "status": status.status,
                             "enabled": status.enabled
                         });
                     }
                     Err(error) => {
-                        service_nodes[node] = json!({
-                            "status": "error",
-                            "error": error
-                        });
+                        // Only count as error if service should exist on this node
+                        if let Some(node_services) = node_service_map.get(&node.to_string()) {
+                            if node_services.contains(service) {
+                                service_nodes[node] = json!({
+                                    "status": "error",
+                                    "error": error
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -577,18 +602,28 @@ impl TypeSafeMcpTool<ClusterInfoArgs> for ClusterInfoTool {
             let service_health = if healthy_instances > 0 {
                 services_up += 1;
                 "healthy"
-            } else {
+            } else if total_instances > 0 {
                 services_down += 1;
                 "unhealthy"
+            } else {
+                // Service doesn't exist anywhere - don't count it
+                "not_deployed"
             };
 
-            cluster_data["services"][service] = json!({
-                "overall_status": service_health,
-                "healthy_instances": healthy_instances,
-                "total_instances": total_instances,
-                "availability_percentage": (healthy_instances as f64 / total_instances as f64) * 100.0,
-                "nodes": service_nodes
-            });
+            // Only include services that actually exist somewhere
+            if total_instances > 0 {
+                cluster_data["services"][service] = json!({
+                    "overall_status": service_health,
+                    "healthy_instances": healthy_instances,
+                    "total_instances": total_instances,
+                    "availability_percentage": if total_instances > 0 {
+                        (healthy_instances as f64 / total_instances as f64) * 100.0
+                    } else {
+                        0.0
+                    },
+                    "nodes": service_nodes
+                });
+            }
         }
 
         // Update summary statistics

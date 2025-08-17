@@ -224,28 +224,62 @@ impl ClusterClient {
         {
             return Ok(self.mock_service_status(node, service));
         }
-        let systemctl_cmd = format!("systemctl status {service} --no-pager -l");
-        let result = self.exec_on_node(node, &systemctl_cmd, false).await?;
 
-        let is_active = result.stdout.contains("Active: active");
+        // First check if the service unit file exists
+        let exists_cmd = format!("systemctl cat {service} >/dev/null 2>&1");
+        let exists_result = self.exec_on_node(node, &exists_cmd, false).await;
+
+        if let Ok(result) = &exists_result {
+            if !result.success {
+                return Err(format!("Service {service} does not exist on node {node}"));
+            }
+        } else {
+            return Err(format!(
+                "Failed to check if service {service} exists on node {node}"
+            ));
+        }
+
+        // Get service status
+        let systemctl_cmd = format!("systemctl status {service} --no-pager -l");
+        let status_result = self.exec_on_node(node, &systemctl_cmd, false).await;
+
+        let (is_active, status_output) = match status_result {
+            Ok(result) => (result.stdout.contains("Active: active"), result.stdout),
+            Err(_) => (false, String::new()),
+        };
+
+        // Check if service is enabled (don't fail on error)
         let is_enabled_cmd = format!("systemctl is-enabled {service}");
-        let enabled_result = self.exec_on_node(node, &is_enabled_cmd, false).await?;
-        let is_enabled = enabled_result.success;
+        let is_enabled = match self.exec_on_node(node, &is_enabled_cmd, false).await {
+            Ok(result) => {
+                result.success
+                    && !result.stdout.contains("disabled")
+                    && !result.stdout.contains("masked")
+            }
+            Err(_) => false,
+        };
 
         // Extract PID if available
         let pid = if is_active {
-            parse_pid_from_status(&result.stdout).unwrap_or(0)
+            parse_pid_from_status(&status_output).unwrap_or(0)
         } else {
             0
         };
 
+        // Determine actual status from systemctl output
+        let status = if status_output.contains("Active: active") {
+            "active".to_string()
+        } else if status_output.contains("Active: inactive") {
+            "inactive".to_string()
+        } else if status_output.contains("Active: failed") {
+            "failed".to_string()
+        } else {
+            "unknown".to_string()
+        };
+
         Ok(ServiceStatus {
             service: service.to_string(),
-            status: if is_active {
-                "active".to_string()
-            } else {
-                "inactive".to_string()
-            },
+            status,
             enabled: is_enabled,
             running: is_active,
             pid,
@@ -255,6 +289,33 @@ impl ClusterClient {
             last_restart: "2024-01-01T12:00:00Z".to_string(),
             restart_count: 0,
         })
+    }
+
+    /// Get list of available services on a node
+    pub async fn get_available_services(&self, node: &str) -> Result<Vec<String>, String> {
+        if std::env::var("GOLDENTOOTH_MOCK_SSH").is_ok()
+            || std::env::var("CI").is_ok()
+            || std::env::var("GITHUB_ACTIONS").is_ok()
+        {
+            return Ok(vec!["consul".to_string(), "ssh".to_string()]);
+        }
+
+        let cmd = "systemctl list-units --type=service --state=loaded --no-legend | grep -E '(consul|nomad|vault|kubelet|ssh)' | awk '{print $1}' | sed 's/\\.service$//' | sort | uniq";
+        let result = self.exec_on_node(node, cmd, false).await?;
+
+        let services: Vec<String> = result
+            .stdout
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .filter(|line| {
+                !line.contains("cert-renewer")
+                    && !line.contains("regenerate")
+                    && !line.contains("sshswitch")
+            })
+            .map(|line| line.trim().to_string())
+            .collect();
+
+        Ok(services)
     }
 
     /// Fetch node_exporter metrics via HTTP
