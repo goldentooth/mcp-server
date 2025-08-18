@@ -12,8 +12,11 @@ pub struct ClusterClient {
 
 impl ClusterClient {
     pub fn new() -> Self {
+        // Use environment variable for SSH user, defaulting to "root" which matches goldentooth CLI
+        let ssh_user = std::env::var("GOLDENTOOTH_SSH_USER").unwrap_or_else(|_| "root".to_string());
+
         Self {
-            ssh_user: "goldentooth".to_string(),
+            ssh_user,
             ssh_key_path: None,
             timeout: Duration::from_secs(30),
         }
