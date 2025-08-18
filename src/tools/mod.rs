@@ -542,7 +542,7 @@ impl TypeSafeMcpTool<ClusterInfoArgs> for ClusterInfoTool {
         // First pass: discover what services exist on each node
         for node in NodeName::valid_nodes() {
             if let Ok(services) = client.get_available_services(node).await {
-                node_service_map.insert(node.to_string(), services.clone());
+                node_service_map.insert(node, services.clone());
                 for service in services {
                     all_discovered_services.insert(service);
                 }
@@ -560,7 +560,7 @@ impl TypeSafeMcpTool<ClusterInfoArgs> for ClusterInfoTool {
 
             for node in NodeName::valid_nodes() {
                 // Only check this service if it exists on this node
-                if let Some(node_services) = node_service_map.get(&node.to_string()) {
+                if let Some(node_services) = node_service_map.get(node) {
                     if !node_services.contains(service) {
                         // Service doesn't exist on this node - skip
                         continue;
@@ -587,7 +587,7 @@ impl TypeSafeMcpTool<ClusterInfoArgs> for ClusterInfoTool {
                     }
                     Err(error) => {
                         // Only count as error if service should exist on this node
-                        if let Some(node_services) = node_service_map.get(&node.to_string()) {
+                        if let Some(node_services) = node_service_map.get(node) {
                             if node_services.contains(service) {
                                 service_nodes[node] = json!({
                                     "status": "error",
