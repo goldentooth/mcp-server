@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::prelude::*;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -1045,6 +1046,154 @@ impl TypeSafeMcpTool<LokiLogsArgs> for LokiLogsTool {
     }
 }
 
+/// Screenshot URL tool for capturing web pages
+pub struct ScreenshotUrlTool;
+
+#[async_trait]
+impl TypeSafeMcpTool<ScreenshotUrlArgs> for ScreenshotUrlTool {
+    fn description(&self) -> &str {
+        "Capture a screenshot of a web page using headless Chrome"
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to capture a screenshot of",
+                    "format": "uri"
+                },
+                "width": {
+                    "type": "integer",
+                    "description": "Optional viewport width in pixels",
+                    "minimum": 100,
+                    "maximum": 4096,
+                    "default": 1920
+                },
+                "height": {
+                    "type": "integer",
+                    "description": "Optional viewport height in pixels",
+                    "minimum": 100,
+                    "maximum": 4096,
+                    "default": 1080
+                },
+                "wait_for_selector": {
+                    "type": "string",
+                    "description": "Optional CSS selector to wait for before taking screenshot"
+                },
+                "wait_timeout_ms": {
+                    "type": "integer",
+                    "description": "Optional maximum time to wait for page load in milliseconds",
+                    "minimum": 1000,
+                    "maximum": 30000,
+                    "default": 5000
+                }
+            },
+            "required": ["url"]
+        })
+    }
+
+    async fn execute(&self, args: ScreenshotUrlArgs) -> ToolResult<Value> {
+        let start_time = std::time::Instant::now();
+
+        // For now, return a placeholder implementation
+        // TODO: Implement proper headless Chrome screenshot capture
+
+        let width = args.width.unwrap_or(1920);
+        let height = args.height.unwrap_or(1080);
+        let duration = start_time.elapsed().as_secs_f64();
+
+        // Create a simple placeholder image (1x1 PNG)
+        let placeholder_png = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08,
+            0xD7, 0x63, 0x00, 0x02, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+
+        let base64_image = BASE64_STANDARD.encode(&placeholder_png);
+
+        Ok(json!({
+            "url": args.url.as_str(),
+            "width": width,
+            "height": height,
+            "wait_for_selector": args.wait_for_selector,
+            "wait_timeout_ms": args.wait_timeout_ms.unwrap_or(5000),
+            "screenshot_size_bytes": placeholder_png.len(),
+            "screenshot_base64": base64_image,
+            "screenshot_format": "png",
+            "duration_seconds": duration,
+            "captured_at": chrono::Utc::now().to_rfc3339(),
+            "viewport": {
+                "width": width,
+                "height": height
+            },
+            "note": "Placeholder implementation - headless Chrome integration TODO"
+        }))
+    }
+}
+
+/// Screenshot dashboard tool for capturing authenticated dashboards
+pub struct ScreenshotDashboardTool;
+
+#[async_trait]
+impl TypeSafeMcpTool<ScreenshotDashboardArgs> for ScreenshotDashboardTool {
+    fn description(&self) -> &str {
+        "Capture a screenshot of a Grafana dashboard with Authelia authentication bypass"
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "dashboard_url": {
+                    "type": "string",
+                    "description": "The Grafana dashboard URL to capture",
+                    "format": "uri"
+                }
+            },
+            "required": ["dashboard_url"]
+        })
+    }
+
+    async fn execute(&self, args: ScreenshotDashboardArgs) -> ToolResult<Value> {
+        let start_time = std::time::Instant::now();
+
+        // For now, return a placeholder implementation
+        // TODO: Implement proper headless Chrome with Authelia authentication bypass
+
+        let duration = start_time.elapsed().as_secs_f64();
+
+        // Create a simple placeholder image (1x1 PNG)
+        let placeholder_png = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08,
+            0xD7, 0x63, 0x00, 0x02, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+
+        let base64_image = BASE64_STANDARD.encode(&placeholder_png);
+
+        Ok(json!({
+            "dashboard_url": args.dashboard_url.as_str(),
+            "screenshot_size_bytes": placeholder_png.len(),
+            "screenshot_base64": base64_image,
+            "screenshot_format": "png",
+            "duration_seconds": duration,
+            "captured_at": chrono::Utc::now().to_rfc3339(),
+            "viewport": {
+                "width": 1920,
+                "height": 1080
+            },
+            "authentication": "bypass_planned", // TODO: Implement Authelia bypass
+            "note": "Placeholder implementation - headless Chrome with Authelia auth TODO"
+        }))
+    }
+}
+
 /// Type-safe tool execution function
 ///
 /// This function takes strongly-typed tool arguments and executes the appropriate tool.
@@ -1083,11 +1232,14 @@ pub async fn execute_tool_type_safe(tool_args: ToolArgs) -> ToolResult<Value> {
             let tool = LokiLogsTool;
             TypeSafeMcpTool::execute(&tool, args).await
         }
-        // Add other tools as they're implemented
-        _ => Err(TypeSafeError::<error_contexts::Tool>::tool_not_found(
-            tool_args.tool_name().to_string(),
-            MessageId::Number(0),
-        )),
+        ToolArgs::ScreenshotUrl(args) => {
+            let tool = ScreenshotUrlTool;
+            TypeSafeMcpTool::execute(&tool, args).await
+        }
+        ToolArgs::ScreenshotDashboard(args) => {
+            let tool = ScreenshotDashboardTool;
+            TypeSafeMcpTool::execute(&tool, args).await
+        }
     }
 }
 
@@ -1265,6 +1417,51 @@ pub fn parse_tool_arguments(tool_name: &str, params: Value) -> Result<ToolArgs, 
                 direction,
             };
             Ok(ToolArgs::LokiLogs(args))
+        }
+        "screenshot_url" => {
+            let url_str = params
+                .get("url")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing required parameter: url")?;
+
+            let url = HttpUrl::new(url_str).map_err(|e| e.to_string())?;
+
+            let width = params
+                .get("width")
+                .and_then(|v| v.as_u64())
+                .map(|w| w as u32);
+            let height = params
+                .get("height")
+                .and_then(|v| v.as_u64())
+                .map(|h| h as u32);
+            let wait_for_selector = params
+                .get("wait_for_selector")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let wait_timeout_ms = params
+                .get("wait_timeout_ms")
+                .and_then(|v| v.as_u64())
+                .map(|t| t as u32);
+
+            let args = ScreenshotUrlArgs {
+                url,
+                width,
+                height,
+                wait_for_selector,
+                wait_timeout_ms,
+            };
+            Ok(ToolArgs::ScreenshotUrl(args))
+        }
+        "screenshot_dashboard" => {
+            let dashboard_url_str = params
+                .get("dashboard_url")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing required parameter: dashboard_url")?;
+
+            let dashboard_url = HttpUrl::new(dashboard_url_str).map_err(|e| e.to_string())?;
+
+            let args = ScreenshotDashboardArgs { dashboard_url };
+            Ok(ToolArgs::ScreenshotDashboard(args))
         }
         _ => Err(format!("unsupported tool '{tool_name}'")),
     }

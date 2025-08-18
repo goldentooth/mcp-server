@@ -633,3 +633,145 @@ async fn test_loki_logs_with_time_range() {
     assert_eq!(result["end"], "now");
     assert_eq!(result["limit"], 10);
 }
+
+#[tokio::test]
+async fn test_screenshot_url_basic() {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "id": 20,
+        "params": {
+            "name": "screenshot_url",
+            "arguments": {
+                "url": "https://example.com"
+            }
+        }
+    });
+
+    let response = process_mcp_request_direct(request).await;
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 20);
+    assert!(response["result"].is_object());
+
+    let result = &response["result"];
+    assert_eq!(result["url"], "https://example.com");
+    assert_eq!(result["width"], 1920);
+    assert_eq!(result["height"], 1080);
+    assert_eq!(result["screenshot_format"], "png");
+    assert!(result["screenshot_base64"].is_string());
+    assert!(result["duration_seconds"].is_number());
+    assert!(result["captured_at"].is_string());
+    assert!(result["note"].as_str().unwrap().contains("Placeholder"));
+}
+
+#[tokio::test]
+async fn test_screenshot_url_with_custom_dimensions() {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "id": 21,
+        "params": {
+            "name": "screenshot_url",
+            "arguments": {
+                "url": "https://example.com",
+                "width": 800,
+                "height": 600,
+                "wait_timeout_ms": 10000
+            }
+        }
+    });
+
+    let response = process_mcp_request_direct(request).await;
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 21);
+    assert!(response["result"].is_object());
+
+    let result = &response["result"];
+    assert_eq!(result["url"], "https://example.com");
+    assert_eq!(result["width"], 800);
+    assert_eq!(result["height"], 600);
+    assert_eq!(result["wait_timeout_ms"], 10000);
+}
+
+#[tokio::test]
+async fn test_screenshot_dashboard_basic() {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "id": 22,
+        "params": {
+            "name": "screenshot_dashboard",
+            "arguments": {
+                "dashboard_url": "https://grafana.services.goldentooth.net/dashboard"
+            }
+        }
+    });
+
+    let response = process_mcp_request_direct(request).await;
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 22);
+    assert!(response["result"].is_object());
+
+    let result = &response["result"];
+    assert_eq!(
+        result["dashboard_url"],
+        "https://grafana.services.goldentooth.net/dashboard"
+    );
+    assert_eq!(result["screenshot_format"], "png");
+    assert_eq!(result["authentication"], "bypass_planned");
+    assert!(result["screenshot_base64"].is_string());
+    assert!(result["duration_seconds"].is_number());
+    assert!(result["captured_at"].is_string());
+    assert!(result["viewport"]["width"], 1920);
+    assert!(result["viewport"]["height"], 1080);
+    assert!(result["note"].as_str().unwrap().contains("Placeholder"));
+}
+
+#[tokio::test]
+async fn test_screenshot_url_invalid_url() {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "id": 23,
+        "params": {
+            "name": "screenshot_url",
+            "arguments": {
+                "url": "not-a-valid-url"
+            }
+        }
+    });
+
+    let response = process_mcp_request_direct(request).await;
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 23);
+
+    // Should have an error field due to invalid URL
+    assert!(response["error"].is_object());
+    assert_eq!(response["error"]["code"], -32602); // Invalid params
+}
+
+#[tokio::test]
+async fn test_screenshot_dashboard_missing_url() {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "id": 24,
+        "params": {
+            "name": "screenshot_dashboard",
+            "arguments": {}
+        }
+    });
+
+    let response = process_mcp_request_direct(request).await;
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 24);
+
+    // Should have an error field due to missing dashboard_url parameter
+    assert!(response["error"].is_object());
+    assert_eq!(response["error"]["code"], -32602); // Invalid params
+}
